@@ -1,0 +1,325 @@
+import type { NewsSentiment } from "./types";
+import { fetchJQuantsJson, JQuantsHttpError } from "./jquantsClient";
+
+type NewsRow = Record<string, unknown>;
+
+type CachedNewsSentiment = {
+  expiresAt: number;
+  value: NewsSentiment;
+};
+
+const JQUANTS_NEWS_ENDPOINT = process.env.JPX_NEWS_ENDPOINT || "https://api.jquants.com/v1/news";
+
+const POSITIVE_WORDS = [
+  "上方修正",
+  "増配",
+  "提携",
+  "受注",
+  "成長",
+  "黒字",
+  "最高益",
+  "好調",
+  "上昇",
+  "買収",
+  "expansion",
+  "upgrade",
+  "growth",
+  "profit",
+  "増収",
+  "増益",
+  "受注拡大",
+  "業績予想引き上げ",
+  "自社株買い",
+  "record high",
+  "beat",
+  "outperform",
+];
+
+const NEGATIVE_WORDS = [
+  "下方修正",
+  "減配",
+  "赤字",
+  "不正",
+  "下落",
+  "訴訟",
+  "減益",
+  "悪化",
+  "中止",
+  "事故",
+  "downgrade",
+  "loss",
+  "risk",
+  "lawsuit",
+  "減収",
+  "業績予想引き下げ",
+  "赤字拡大",
+  "減損",
+  "供給不足",
+  "miss",
+  "underperform",
+];
+
+const POSITIVE_PHRASES: Array<{ phrase: string; weight: number }> = [
+  { phrase: "上方修正", weight: 2.2 },
+  { phrase: "業績上方修正", weight: 2.8 },
+  { phrase: "業績予想引き上げ", weight: 2 },
+  { phrase: "増配", weight: 1.8 },
+  { phrase: "大口受注", weight: 2.4 },
+  { phrase: "大型受注", weight: 2.4 },
+  { phrase: "自社株買い", weight: 1.7 },
+  { phrase: "大型提携", weight: 2.1 },
+  { phrase: "record high", weight: 1.6 },
+  { phrase: "outperform", weight: 1.5 },
+];
+
+const NEGATIVE_PHRASES: Array<{ phrase: string; weight: number }> = [
+  { phrase: "下方修正", weight: 2.2 },
+  { phrase: "業績下方修正", weight: 2.8 },
+  { phrase: "業績予想引き下げ", weight: 2 },
+  { phrase: "減損", weight: 1.9 },
+  { phrase: "赤字拡大", weight: 1.9 },
+  { phrase: "不祥事", weight: 2.3 },
+  { phrase: "行政処分", weight: 2.2 },
+  { phrase: "訴訟", weight: 2.1 },
+  { phrase: "supply shortage", weight: 1.5 },
+  { phrase: "underperform", weight: 1.5 },
+];
+
+const NEWS_CACHE_TTL_MS = 3 * 60 * 1000;
+const newsCache = new Map<string, CachedNewsSentiment>();
+
+function readString(record: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+
+  return "";
+}
+
+function collectHeadlines(rows: NewsRow[]) {
+  return rows
+    .map((row) => {
+      return readString(row, ["headline", "Headline", "title", "Title", "Subject", "subject"]);
+    })
+    .filter((headline) => headline.length > 0)
+    .slice(0, 12);
+}
+
+function readPublishedAt(row: NewsRow) {
+  return readString(row, ["published_at", "publishedAt", "disclosedDate", "date", "Date", "time"]);
+}
+
+function recencyWeight(publishedAtText: string) {
+  if (!publishedAtText) {
+    return 0.85;
+  }
+
+  const timestamp = Date.parse(publishedAtText);
+  if (!Number.isFinite(timestamp)) {
+    return 0.85;
+  }
+
+  const ageDays = Math.max(0, (Date.now() - timestamp) / (24 * 60 * 60 * 1000));
+  if (ageDays <= 1) {
+    return 1.3;
+  }
+
+  if (ageDays <= 3) {
+    return 1.15;
+  }
+
+  if (ageDays <= 7) {
+    return 1;
+  }
+
+  if (ageDays <= 14) {
+    return 0.85;
+  }
+
+  return 0.65;
+}
+
+function scoreHeadline(text: string) {
+  const normalized = text.toLowerCase();
+  let score = 0;
+  let positiveHits = 0;
+  let negativeHits = 0;
+
+  for (const word of POSITIVE_WORDS) {
+    if (normalized.includes(word.toLowerCase())) {
+      score += 1;
+      positiveHits += 1;
+    }
+  }
+
+  for (const word of NEGATIVE_WORDS) {
+    if (normalized.includes(word.toLowerCase())) {
+      score -= 1;
+      negativeHits += 1;
+    }
+  }
+
+  for (const item of POSITIVE_PHRASES) {
+    if (normalized.includes(item.phrase.toLowerCase())) {
+      score += item.weight;
+      positiveHits += 1;
+    }
+  }
+
+  for (const item of NEGATIVE_PHRASES) {
+    if (normalized.includes(item.phrase.toLowerCase())) {
+      score -= item.weight;
+      negativeHits += 1;
+    }
+  }
+
+  return {
+    score,
+    positiveHits,
+    negativeHits,
+  };
+}
+
+function summarizeSentiment(rows: NewsRow[]): NewsSentiment {
+  if (rows.length === 0) {
+    return {
+      sentiment: "neutral",
+      importance: "軽微",
+      score: 0,
+      confidence: 35,
+      summary: "直近ニュースが少ないため、中立評価です。",
+      headlines: [],
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  const headlines = collectHeadlines(rows);
+  const scoredRows = rows
+    .map((row) => {
+      const headline = readString(row, ["headline", "Headline", "title", "Title", "Subject", "subject"]);
+      if (!headline) {
+        return null;
+      }
+
+      const publishedAt = readPublishedAt(row);
+      const weight = recencyWeight(publishedAt);
+      const scored = scoreHeadline(headline);
+      return {
+        headline,
+        weightedScore: scored.score * weight,
+        positiveHits: scored.positiveHits,
+        negativeHits: scored.negativeHits,
+      };
+    })
+    .filter((item): item is { headline: string; weightedScore: number; positiveHits: number; negativeHits: number } => Boolean(item));
+
+  const raw = scoredRows.reduce((total, item) => total + item.weightedScore, 0);
+  const positiveHits = scoredRows.reduce((total, item) => total + item.positiveHits, 0);
+  const negativeHits = scoredRows.reduce((total, item) => total + item.negativeHits, 0);
+  const mixedSignalPenalty = positiveHits > 0 && negativeHits > 0
+    ? Math.min(10, Math.abs(positiveHits - negativeHits) <= 2 ? 8 : 5)
+    : 0;
+  const denominator = Math.max(scoredRows.length, 1);
+  const normalizedScore = Math.max(-100, Math.min(100, Math.round((raw / denominator) * 30)));
+  const sentiment = normalizedScore >= 12 ? "bullish" : normalizedScore <= -12 ? "bearish" : "neutral";
+  const confidence = Math.max(35, Math.min(92, 40 + scoredRows.length * 3 + Math.abs(normalizedScore) / 2.8 - mixedSignalPenalty));
+  const importance: NewsSentiment["importance"] = Math.abs(normalizedScore) >= 24
+    ? "重要"
+    : Math.abs(normalizedScore) >= 12
+      ? "普通"
+      : "軽微";
+  const importantLabel = Math.abs(normalizedScore) >= 24
+    ? sentiment === "bullish"
+      ? "重要な好材料"
+      : sentiment === "bearish"
+        ? "重要な悪材料"
+        : "重要材料は限定的"
+    : "";
+
+  const summary =
+    sentiment === "bullish"
+      ? `ニュースフローはやや強気で、ポジティブ材料が優勢です（+${positiveHits}/-${negativeHits}）。${importantLabel ? ` ${importantLabel}が含まれています。` : ""}`
+      : sentiment === "bearish"
+        ? `ニュースフローは弱気寄りで、ネガティブ材料に注意が必要です（+${positiveHits}/-${negativeHits}）。${importantLabel ? ` ${importantLabel}が含まれています。` : ""}`
+        : `ニュースフローは中立で、方向感は限定的です（+${positiveHits}/-${negativeHits}）。`;
+
+  return {
+    sentiment,
+    importance,
+    score: normalizedScore,
+    confidence: Math.round(confidence),
+    summary,
+    headlines,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+async function fetchEndpoint(url: URL) {
+  try {
+    return await fetchJQuantsJson(url);
+  } catch (error) {
+    if (error instanceof JQuantsHttpError && (error.status === 401 || error.status === 403 || error.status === 404)) {
+      throw error;
+    }
+
+    throw error;
+  }
+}
+
+function getCached(code: string) {
+  const cached = newsCache.get(code);
+  if (!cached) {
+    return null;
+  }
+
+  if (cached.expiresAt < Date.now()) {
+    newsCache.delete(code);
+    return null;
+  }
+
+  return cached.value;
+}
+
+function setCached(code: string, value: NewsSentiment) {
+  newsCache.set(code, {
+    expiresAt: Date.now() + NEWS_CACHE_TTL_MS,
+    value,
+  });
+}
+
+export async function fetchJpxNewsAnalysis(code: string): Promise<NewsSentiment> {
+  const cached = getCached(code);
+  if (cached) {
+    return cached;
+  }
+
+  const today = new Date();
+  const from = new Date(today.getTime() - 1000 * 60 * 60 * 24 * 30);
+  const fromCompact = `${from.getFullYear()}${String(from.getMonth() + 1).padStart(2, "0")}${String(from.getDate()).padStart(2, "0")}`;
+
+  try {
+    const url = new URL(JQUANTS_NEWS_ENDPOINT);
+    url.searchParams.set("code", code);
+    url.searchParams.set("from", fromCompact);
+    const json = await fetchEndpoint(url);
+    const rows =
+      json && typeof json === "object" && "data" in json && Array.isArray((json as { data?: unknown }).data)
+        ? ((json as { data: unknown[] }).data.filter((row): row is NewsRow => Boolean(row && typeof row === "object")))
+        : [];
+
+    if (rows.length > 0) {
+      const analyzed = summarizeSentiment(rows);
+      setCached(code, analyzed);
+      return analyzed;
+    }
+  } catch {
+    // On unavailable endpoint (401/403/404/429), fall through to neutral fallback.
+  }
+
+  const fallback = summarizeSentiment([]);
+  setCached(code, fallback);
+  return fallback;
+}

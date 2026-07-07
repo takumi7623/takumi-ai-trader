@@ -1,0 +1,26 @@
+﻿{
+  "success": true,
+  "status": "ready",
+  "data": [
+    {
+      "rank": 1,
+      "code": "7203",
+      "name": "トヨタ自動車",
+      "sector": "輸送用機器",
+      "score": 82,
+      "judgment": "買い",
+      "probability5m": 64,
+      "probability15m": 68,
+      "entryPrice": 3200,
+      "takeProfitPrice": 3296,
+      "stopLossPrice": 3140,
+      "winRate": 66,
+      "confidence": 71
+    }
+  ],
+  "updatedAt": "2026-07-06T00:00:00.000Z",
+  "progress": {
+    "total": 4000,
+    "analyzed": 4000
+  }
+}
