@@ -773,8 +773,16 @@ async function loadLearningStore(): Promise<WeightLearningStore> {
 }
 
 async function saveLearningStore(store: WeightLearningStore) {
+  if (process.env.VERCEL) {
+    return;
+  }
+
   await mkdir(CACHE_DIR, { recursive: true });
-  await writeFile(LEARNING_STORE_PATH, JSON.stringify(store), "utf-8");
+  await writeFile(
+    LEARNING_STORE_PATH,
+    JSON.stringify(store),
+    "utf-8"
+  );
 }
 
 function getPreferredHistoricalWeights(store: WeightLearningStore, horizon: WeightHorizon) {
