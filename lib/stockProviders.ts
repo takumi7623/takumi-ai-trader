@@ -6,6 +6,8 @@ import type {
   StockTimeframe,
 } from "./types";
 import { fetchJQuantsJson, JQuantsHttpError } from "./jquantsClient";
+import { readFile, writeFile, mkdir } from "node:fs/promises";
+import path from "node:path";
 
 export type StockProvider = Exclude<StockApiSource, "mock">;
 
@@ -53,6 +55,17 @@ type FinnhubCandleResponse = {
 
 const stockCache = new Map<string, { expiresAt: number; value: Stock }>();
 const inFlightStockRequests = new Map<string, Promise<Stock | null>>();
+const jpxMasterMetaCache = new Map<string, { expiresAt: number; value: { name: string; sector: string } | null }>();
+
+const JPX_META_OVERRIDES: Record<string, { name: string; sector: string }> = {
+  "7203": { name: "トヨタ自動車", sector: "輸送用機器" },
+  "6758": { name: "ソニーグループ", sector: "電気機器" },
+  "7974": { name: "任天堂", sector: "その他製品" },
+};
+
+const JPX_MASTER_META_TTL_MS = 6 * 60 * 60 * 1000;
+const STOCK_SNAPSHOT_DIR = path.join(process.cwd(), ".cache");
+const SCORE_HISTORY_CANDLES = 320;
 
 function getCacheTtlMs(timeframe: StockTimeframe) {
   if (timeframe === "5m") {
@@ -222,7 +235,7 @@ function normalizeAlphaVantageCandles(json: unknown): StockCandle[] {
     })
     .filter((candle): candle is StockCandle => candle !== null)
     .sort((left, right) => left.time.localeCompare(right.time))
-    .slice(-140);
+    .slice(-SCORE_HISTORY_CANDLES);
 }
 
 function normalizeFinnhubCandles(json: FinnhubCandleResponse): StockCandle[] {
@@ -286,6 +299,8 @@ function normalizeJpxCandles(json: unknown): StockCandle[] {
 
   const rawCandles = Array.isArray(json.data)
     ? json.data
+    : Array.isArray(json.daily_quotes)
+      ? json.daily_quotes
     : Array.isArray(json)
       ? json
       : [];
@@ -318,7 +333,226 @@ function normalizeJpxCandles(json: unknown): StockCandle[] {
     })
     .filter((candle): candle is StockCandle => candle !== null)
     .sort((left, right) => left.time.localeCompare(right.time))
-    .slice(-140);
+    .slice(-SCORE_HISTORY_CANDLES);
+}
+
+function normalizeJpxMasterCode(value: unknown): string | null {
+  if (typeof value !== "string" && typeof value !== "number") {
+    return null;
+  }
+
+  const text = String(value).replace(/\D/g, "");
+  if (/^\d{4}$/.test(text)) {
+    return text;
+  }
+
+  if (/^\d{5}$/.test(text)) {
+    return text.slice(0, 4);
+  }
+
+  return null;
+}
+
+function stockSnapshotPath(code: string, timeframe: StockTimeframe) {
+  return path.join(STOCK_SNAPSHOT_DIR, `jpx-stock-${code}-${timeframe}.json`);
+}
+
+function normalizeCachedStock(value: unknown, timeframe: StockTimeframe): Stock | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const direct = value;
+  const wrapped = isRecord(value.data) ? (value.data as Record<string, unknown>) : null;
+  const stockLike = wrapped ?? direct;
+  const code = typeof stockLike.code === "string" ? stockLike.code : "";
+  if (!/^\d{4}$/.test(code)) {
+    return null;
+  }
+
+  const name = typeof stockLike.name === "string" && stockLike.name.trim() ? stockLike.name : code;
+  const sector = typeof stockLike.sector === "string" && stockLike.sector.trim() ? stockLike.sector : "未分類";
+  const marketData = isRecord(stockLike.marketData) ? (stockLike.marketData as StockMarketData) : null;
+  const chartData = isRecord(stockLike.chartData) && Array.isArray((stockLike.chartData as Record<string, unknown>).candles)
+    ? ((stockLike.chartData as { candles: StockCandle[] }).candles)
+    : [];
+
+  if (!marketData || chartData.length === 0) {
+    return null;
+  }
+
+  return createStock({
+    code,
+    name,
+    sector,
+    description: "J-Quants API V2 の実データキャッシュを利用しています。",
+    marketData,
+    candles: chartData,
+    dataStatus: "real",
+    dataReason: "cached-real-data",
+    timeframe,
+  });
+}
+
+function normalizeStockFromJpxBarsSnapshot(
+  json: unknown,
+  code: string,
+  timeframe: StockTimeframe,
+): Stock | null {
+  const candles = normalizeJpxCandles(json).filter((candle) => candle.time.length > 0);
+  if (candles.length < 2) {
+    return null;
+  }
+
+  const sorted = [...candles].sort((left, right) => left.time.localeCompare(right.time)).slice(-SCORE_HISTORY_CANDLES);
+  const latest = sorted[sorted.length - 1];
+  const previous = sorted[sorted.length - 2] ?? latest;
+  const previousClose = previous.close;
+  const change = latest.close - previousClose;
+  const changePercent = previousClose > 0 ? (change / previousClose) * 100 : null;
+  const override = JPX_META_OVERRIDES[code];
+
+  return createStock({
+    code,
+    name: override?.name || code,
+    sector: override?.sector || "未分類",
+    description: "J-Quants API V2 の実データスナップショットを利用しています。",
+    marketData: {
+      price: latest.close,
+      open: latest.open,
+      high: latest.high,
+      low: latest.low,
+      previousClose,
+      change,
+      changePercent,
+      currency: "JPY",
+      asOf: `${latest.time}T00:00:00.000Z`,
+    },
+    candles: sorted,
+    dataStatus: "real",
+    dataReason: "cached-real-bars",
+    timeframe,
+  });
+}
+
+async function saveJpxStockSnapshot(stock: Stock, timeframe: StockTimeframe) {
+  try {
+    await mkdir(STOCK_SNAPSHOT_DIR, { recursive: true });
+    await writeFile(stockSnapshotPath(stock.code, timeframe), JSON.stringify(stock), "utf-8");
+  } catch {
+    // Ignore snapshot write failures and continue serving live data.
+  }
+}
+
+function parseJsonFlexible(raw: Uint8Array): unknown | null {
+  const decoders = ["utf-8", "utf-16le", "shift_jis"];
+
+  for (const encoding of decoders) {
+    try {
+      const text = new TextDecoder(encoding).decode(raw).replace(/^\uFEFF/, "").replace(/^\u0000+/, "").trim();
+      if (!text.startsWith("{") && !text.startsWith("[")) {
+        continue;
+      }
+
+      return JSON.parse(text);
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
+}
+
+async function loadJpxStockSnapshot(code: string, timeframe: StockTimeframe): Promise<Stock | null> {
+  const candidates = [
+    stockSnapshotPath(code, timeframe),
+    stockSnapshotPath(code, "1d"),
+    path.join(process.cwd(), "tmp_jquants.json"),
+    path.join(process.cwd(), timeframe === "5m" ? "tmp_route_5m.json" : timeframe === "15m" ? "tmp_route.json" : "tmp_route_daily.json"),
+  ];
+
+  for (const filePath of candidates) {
+    try {
+      const raw = await readFile(filePath);
+      const json = parseJsonFlexible(raw);
+      if (!json) {
+        continue;
+      }
+
+      const normalized = normalizeCachedStock(json, timeframe);
+      const fromBars = normalized ?? normalizeStockFromJpxBarsSnapshot(json, code, timeframe);
+      if (!fromBars) {
+        continue;
+      }
+
+      const override = JPX_META_OVERRIDES[fromBars.code];
+      if (override) {
+        return {
+          ...fromBars,
+          name: override.name,
+          sector: override.sector,
+        };
+      }
+
+      return fromBars;
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
+}
+
+async function fetchJpxMasterMeta(code: string): Promise<{ name: string; sector: string } | null> {
+  const override = JPX_META_OVERRIDES[code];
+  if (override) {
+    return override;
+  }
+
+  const cached = jpxMasterMetaCache.get(code);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.value;
+  }
+
+  const url = new URL("https://api.jquants.com/v2/equities/master");
+  url.searchParams.set("code", code);
+
+  try {
+    const json = await fetchJQuantsJson(url);
+    if (!isRecord(json)) {
+      jpxMasterMetaCache.set(code, { expiresAt: Date.now() + JPX_MASTER_META_TTL_MS, value: null });
+      return null;
+    }
+
+    const rows = Array.isArray(json.data) ? json.data : [];
+    for (const row of rows) {
+      if (!isRecord(row)) {
+        continue;
+      }
+
+      const normalizedCode = normalizeJpxMasterCode(row.Code ?? row.code);
+      if (normalizedCode !== code) {
+        continue;
+      }
+
+      const name = readString(row, ["CompanyName", "CoName", "IssueName", "Name", "name"]);
+      const sector = readString(row, ["Sector33CodeName", "S33Nm", "Sector17CodeName", "S17Nm", "MktNm", "MarketCodeName"]);
+      const value = {
+        name: name || code,
+        sector: sector || "未分類",
+      };
+
+      jpxMasterMetaCache.set(code, { expiresAt: Date.now() + JPX_MASTER_META_TTL_MS, value });
+      return value;
+    }
+  } catch (error) {
+    if (!(error instanceof JQuantsHttpError && (error.status === 401 || error.status === 403 || error.status === 404 || error.status === 429))) {
+      console.warn("Failed to fetch J-Quants master metadata.", error);
+    }
+  }
+
+  jpxMasterMetaCache.set(code, { expiresAt: Date.now() + 10 * 60 * 1000, value: null });
+  return null;
 }
 
 function getCachedStock(key: string) {
@@ -344,8 +578,31 @@ function setCachedStock(key: string, stock: Stock, timeframe: StockTimeframe) {
 }
 
 function buildJpxEndpointCandidates(baseUrl: string | undefined) {
-  const endpoint = baseUrl || process.env.JPX_API_BASE_URL || "https://api.jquants.com/v2/equities/bars/daily";
-  return [new URL(endpoint)];
+  const defaults = [
+    "https://api.jquants.com/v2/equities/bars/daily",
+    "https://api.jquants.com/v2/prices/daily_quotes",
+  ];
+
+  const candidates = [
+    baseUrl,
+    process.env.JPX_API_BASE_URL,
+    ...defaults,
+  ].filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+
+  const unique = new Set<string>();
+  const urls: URL[] = [];
+
+  for (const candidate of candidates) {
+    const normalized = candidate.trim();
+    if (unique.has(normalized)) {
+      continue;
+    }
+
+    unique.add(normalized);
+    urls.push(new URL(normalized));
+  }
+
+  return urls;
 }
 
 async function fetchJpxJsonWithFallback(
@@ -355,21 +612,31 @@ async function fetchJpxJsonWithFallback(
   const candidates = buildJpxEndpointCandidates(baseUrl);
 
   for (const candidate of candidates) {
-    const url = new URL(candidate);
-    url.searchParams.set("code", code);
-    url.searchParams.set("range", "daily");
+    const paramPatterns = [
+      { code, range: "daily" },
+      { code },
+    ];
 
-    try {
-      const json = await fetchJQuantsJson(url);
-
-      return { json, url };
-    } catch (error) {
-      if (error instanceof JQuantsHttpError && (error.status === 401 || error.status === 403 || error.status === 429)) {
-        return null;
+    for (const params of paramPatterns) {
+      const url = new URL(candidate);
+      for (const [key, value] of Object.entries(params)) {
+        url.searchParams.set(key, value);
       }
 
-      console.warn(`J-Quants probe failed for ${url.toString()}`, error);
-      return null;
+      try {
+        const json = await fetchJQuantsJson(url);
+        const candles = normalizeJpxCandles(json);
+        if (candles.length > 0) {
+          return { json, url };
+        }
+      } catch (error) {
+        if (error instanceof JQuantsHttpError && (error.status === 401 || error.status === 403 || error.status === 429)) {
+          return null;
+        }
+
+        console.warn(`J-Quants probe failed for ${url.toString()}`, error);
+        continue;
+      }
     }
   }
 
@@ -501,51 +768,61 @@ export async function fetchJpxStock(
   }
 
   const code = resolveJpxCode(query);
-  const result = await fetchJpxJsonWithFallback(code, baseUrl);
+  try {
+    const result = await fetchJpxJsonWithFallback(code, baseUrl);
 
-  if (!result) {
-    return null;
+    if (!result) {
+      return loadJpxStockSnapshot(code, timeframe);
+    }
+
+    const { json } = result;
+
+    if (!isRecord(json)) {
+      return loadJpxStockSnapshot(code, timeframe);
+    }
+
+    const candles = normalizeJpxCandles(json);
+    if (candles.length === 0) {
+      return loadJpxStockSnapshot(code, timeframe);
+    }
+
+    const latest = candles[candles.length - 1];
+    const previous = candles[candles.length - 2];
+    const price = latest.close;
+    const previousClose = previous?.close ?? latest.close;
+    const change = price - previousClose;
+    const changePercent = previousClose > 0 ? (change / previousClose) * 100 : null;
+    const masterMeta = await fetchJpxMasterMeta(code);
+    const companyName = masterMeta?.name || query.trim() || code;
+    const sectorName = masterMeta?.sector || "未分類";
+
+    const stock = createStock({
+      code,
+      name: companyName,
+      sector: sectorName,
+      description: "J-Quants API V2 の株価データをもとに分析しています。",
+      marketData: {
+        price,
+        open: latest.open,
+        high: latest.high,
+        low: latest.low,
+        previousClose,
+        change,
+        changePercent,
+        currency: "JPY",
+        asOf: latest.time ? `${latest.time}T00:00:00.000Z` : null,
+      },
+      candles,
+      dataStatus: "real",
+      dataReason: null,
+      timeframe,
+    });
+
+    await saveJpxStockSnapshot(stock, timeframe);
+    return stock;
+  } catch {
+    return loadJpxStockSnapshot(code, timeframe);
   }
-
-  const { json } = result;
-
-  if (!isRecord(json)) {
-    return null;
-  }
-
-  const candles = normalizeJpxCandles(json);
-  if (candles.length === 0) {
-    return null;
-  }
-
-  const latest = candles[candles.length - 1];
-  const previous = candles[candles.length - 2];
-  const price = latest.close;
-  const previousClose = previous?.close ?? latest.close;
-  const change = price - previousClose;
-  const changePercent = previousClose > 0 ? (change / previousClose) * 100 : null;
-
-  return createStock({
-    code,
-    name: query.trim() || code,
-    sector: "未分類",
-    description: "J-Quants API V2 の株価データをもとに分析しています。",
-    marketData: {
-      price,
-      open: latest.open,
-      high: latest.high,
-      low: latest.low,
-      previousClose,
-      change,
-      changePercent,
-      currency: "JPY",
-      asOf: latest.time ? `${latest.time}T00:00:00.000Z` : null,
-    },
-    candles,
-    dataStatus: "real",
-    dataReason: null,
-    timeframe,
-  });
 }
 
 export async function fetchStockFromProvider(

@@ -2,15 +2,40 @@ export type TradeSignal = "BUY" | "HOLD" | "SELL";
 export type AiJudgment = "強い買い" | "買い" | "様子見" | "売り" | "強い売り";
 export type StockTimeframe = "5m" | "15m" | "1d";
 export type StockDataStatus = "real" | "mock" | "error";
-export type Tepou30SortMode = "ai-total" | "expected-value" | "win-rate" | "risk-reward" | "day-trader";
+export type Tepou30SortMode =
+  | "ai-total"
+  | "expected-value"
+  | "win-rate"
+  | "profit-factor"
+  | "risk-reward"
+  | "day-trader"
+  | "swing-trader";
 
 export type NewsSentiment = {
   sentiment: "bullish" | "neutral" | "bearish";
   importance: "重要" | "普通" | "軽微";
   score: number;
   confidence: number;
+  starRating: number;
+  positiveCount: number;
+  negativeCount: number;
   summary: string;
   headlines: string[];
+  details: Array<{
+    headline: string;
+    sentiment: "positive" | "neutral" | "negative";
+    importanceStars: number;
+    publishedAt?: string;
+  }>;
+  updatedAt: string;
+};
+
+export type MarketContext = {
+  nikkeiChangePercent: number | null;
+  topixChangePercent: number | null;
+  usdJpyChangePercent: number | null;
+  vixChangePercent: number | null;
+  source: string;
   updatedAt: string;
 };
 
@@ -30,6 +55,7 @@ export type Stock = {
   marketData?: StockMarketData;
   chartData?: StockChartData;
   newsAnalysis?: NewsSentiment;
+  marketContext?: MarketContext;
   dataStatus?: StockDataStatus;
   dataReason?: string | null;
   timeframe?: StockTimeframe;
@@ -115,6 +141,8 @@ export type AiScoreResult = {
   probability5m: number;
   probability15m: number;
   probability1d: number;
+  winRate: number;
+  backtestWinRate: number;
   expectedValuePercent: number;
   aiReason: string[];
   positiveFactors: string[];
@@ -147,6 +175,11 @@ export type Tepou30Item = {
   expectedValuePercent: number;
   winRate: number;
   confidence: number;
+  newsSentiment?: NewsSentiment["sentiment"];
+  newsImportanceStars?: number;
+  newsSummary?: string;
+  newsPositiveCount?: number;
+  newsNegativeCount?: number;
 };
 
 export type Tepou30Status = "idle" | "building" | "ready" | "error";
@@ -162,6 +195,8 @@ export type Tepou30BacktestMetrics = {
   maxDrawdown: number;
   profitFactor: number;
   sharpeRatio: number;
+  sortinoRatio: number;
+  calmarRatio: number;
 };
 
 export type Tepou30Response = {

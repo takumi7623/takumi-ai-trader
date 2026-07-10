@@ -63,8 +63,19 @@ function withNews(
       importance,
       score,
       confidence,
+      starRating: importance === "重要" ? 5 : importance === "普通" ? 3 : 1,
+      positiveCount: score >= 0 ? 1 : 0,
+      negativeCount: score < 0 ? 1 : 0,
       summary,
       headlines: [summary],
+      details: [
+        {
+          headline: summary,
+          sentiment: score >= 0 ? "positive" : "negative",
+          importanceStars: importance === "重要" ? 5 : importance === "普通" ? 3 : 1,
+          publishedAt: new Date().toISOString(),
+        },
+      ],
       updatedAt: new Date().toISOString(),
     },
   };

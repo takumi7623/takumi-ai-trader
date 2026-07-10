@@ -4,7 +4,7 @@ import type { FormEvent } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { analyzeStock } from "@/lib/ai/scoreCalculator";
 import { fetchJapaneseStock, fetchTepou30 } from "@/lib/api";
-import type { AiScoreResult, StockTimeframe, Tepou30BacktestMetrics, Tepou30Response, Tepou30SortMode } from "@/lib/types";
+import type { AiScoreResult, NewsSentiment, StockTimeframe, Tepou30BacktestMetrics, Tepou30Response, Tepou30SortMode } from "@/lib/types";
 import StockChart from "./StockChart";
 
 const numberFormatter = new Intl.NumberFormat("ja-JP", {
@@ -17,6 +17,28 @@ function formatPrice(value: number) {
 
 function formatPercent(value: number) {
   return `${Math.round(value)}%`;
+}
+
+function formatFixedNumber(value: unknown, digits = 2) {
+  return typeof value === "number" && Number.isFinite(value) ? value.toFixed(digits) : "--";
+}
+
+function formatSafePercent(value: unknown, digits = 2) {
+  const fixed = formatFixedNumber(value, digits);
+  return fixed === "--" ? "--" : `${fixed}%`;
+}
+
+function formatSafeSignedLossPercent(value: unknown, digits = 2) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return "--";
+  }
+
+  return `-${Math.abs(value).toFixed(digits)}%`;
+}
+
+function renderStars(count: number) {
+  const safeCount = Math.max(0, Math.min(5, Math.round(count)));
+  return `${"★".repeat(safeCount)}${"☆".repeat(5 - safeCount)}`;
 }
 
 function judgmentTone(judgment: AiScoreResult["judgment"]) {
@@ -51,6 +73,7 @@ export default function SearchBox() {
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
   const [result, setResult] = useState<AiScoreResult | null>(null);
+  const [newsAnalysis, setNewsAnalysis] = useState<NewsSentiment | null>(null);
   const [analysisBacktest, setAnalysisBacktest] = useState<Tepou30BacktestMetrics | null>(null);
   const [timeframe, setTimeframe] = useState<StockTimeframe>("1d");
   const [tepou30, setTepou30] = useState<Tepou30Response | null>(null);
@@ -100,7 +123,7 @@ export default function SearchBox() {
 
     pollingTimerRef.current = window.setInterval(() => {
       void fetchTepouRanking(false);
-    }, 30000);
+    }, 3000);
 
     return () => {
       clearPolling();
@@ -128,6 +151,7 @@ export default function SearchBox() {
 
     setError("");
     setAnalysisBacktest(null);
+    setNewsAnalysis(null);
 
     try {
       const { stock, response } = await fetchJapaneseStock(query, timeframe);
@@ -136,10 +160,12 @@ export default function SearchBox() {
         setResult(null);
         setError(response.error ?? "株価データ取得に失敗しました");
         setAnalysisBacktest(null);
+        setNewsAnalysis(null);
         return;
       }
 
       setAnalysisBacktest(stock.analysisBacktest ?? null);
+      setNewsAnalysis(stock.newsAnalysis ?? null);
       setResult(analyzeStock({ query, stock }, {
         weights: stock.analysisWeights,
         learningProfile: stock.analysisLearningProfile,
@@ -148,6 +174,7 @@ export default function SearchBox() {
     } catch {
       setResult(null);
       setAnalysisBacktest(null);
+      setNewsAnalysis(null);
       setError("株価データ取得に失敗しました");
     }
   };
@@ -157,15 +184,15 @@ export default function SearchBox() {
     handleSearch();
   };
 
-  const winRate = result ? Math.round(result.probability5m * 0.2 + result.probability15m * 0.35 + result.probability1d * 0.45) : 0;
+  const winRate = result?.winRate ?? 0;
 
-  function formatMetricPercent(value: number) {
-    return `${value.toFixed(2)}%`;
+  function formatMetricPercent(value: unknown) {
+    return formatSafePercent(value, 2);
   }
 
   return (
-    <section className="max-w-7xl mx-auto w-full px-6 mt-8">
-      <div className="bg-gray-900 border border-gray-700 rounded-xl p-6">
+    <section className="max-w-7xl mx-auto w-full px-4 sm:px-6 mt-8">
+      <div className="bg-gray-900 border border-gray-700 rounded-xl p-4 sm:p-6">
         <h2 className="text-xl font-bold text-cyan-400 mb-4">
           AIスコア検索
         </h2>
@@ -264,7 +291,7 @@ export default function SearchBox() {
               <p>勝率: <span className="font-semibold text-white">{formatPercent(winRate)}</span></p>
               <p>信頼度: <span className="font-semibold text-white">{formatPercent(result.confidence)}</span></p>
               <p>1日確率: <span className="font-semibold text-white">{formatPercent(result.probability1d)}</span></p>
-              <p>期待値: <span className={`font-semibold ${result.expectedValuePercent >= 0 ? "text-emerald-400" : "text-rose-400"}`}>{result.expectedValuePercent.toFixed(2)}%</span></p>
+              <p>期待値: <span className={`font-semibold ${result.expectedValuePercent >= 0 ? "text-emerald-400" : "text-rose-400"}`}>{formatSafePercent(result.expectedValuePercent, 2)}</span></p>
             </div>
 
             {analysisBacktest ? (
@@ -361,7 +388,7 @@ export default function SearchBox() {
               <div className="rounded-lg border border-gray-700 bg-gray-900 p-4">
                 <p className="text-xs text-gray-400">1日期待値</p>
                 <p className={`mt-2 text-2xl font-semibold ${result.expectedValuePercent >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-                  {result.expectedValuePercent.toFixed(2)}%
+                  {formatSafePercent(result.expectedValuePercent, 2)}
                 </p>
               </div>
             </div>
@@ -374,7 +401,7 @@ export default function SearchBox() {
               <div className="mt-4 grid gap-3 lg:grid-cols-3">
                 <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 p-3">
                   <p className="text-xs text-emerald-200">プラス要因</p>
-                  <ul className="mt-2 space-y-1 text-sm text-emerald-50">
+                  <ul className="mt-2 space-y-1 text-sm text-emerald-50 break-words">
                     {result.positiveFactors.length ? result.positiveFactors.map((factor) => (
                       <li key={factor} className="leading-6">
                         {factor}
@@ -384,7 +411,7 @@ export default function SearchBox() {
                 </div>
                 <div className="rounded-lg border border-rose-500/20 bg-rose-500/10 p-3">
                   <p className="text-xs text-rose-200">マイナス要因</p>
-                  <ul className="mt-2 space-y-1 text-sm text-rose-50">
+                  <ul className="mt-2 space-y-1 text-sm text-rose-50 break-words">
                     {result.negativeFactors.length ? result.negativeFactors.map((factor) => (
                       <li key={factor} className="leading-6">
                         {factor}
@@ -394,7 +421,7 @@ export default function SearchBox() {
                 </div>
                 <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/10 p-3">
                   <p className="text-xs text-cyan-200">重要度ランキング</p>
-                  <ul className="mt-2 space-y-1 text-sm text-cyan-50">
+                  <ul className="mt-2 space-y-1 text-sm text-cyan-50 break-words">
                     {result.reasonRanking.map((item, index) => (
                       <li key={`${item.label}-${index}`} className="leading-6">
                         {index + 1}. {item.label} ({item.impact > 0 ? "+" : ""}{item.impact})
@@ -405,15 +432,30 @@ export default function SearchBox() {
               </div>
             </div>
 
-            {result.reasons.some((reason) => reason.includes("ニュース分析")) ? (
+            {newsAnalysis ? (
               <div className="mt-4 rounded-lg border border-gray-700 bg-gray-900 p-4">
-                <p className="text-xs text-gray-400">ニュース分析</p>
-                <p className="mt-2 text-sm leading-6 text-gray-300">
-                  {result.reasons.find((reason) => reason.includes("ニュース分析")) ?? "ニュース情報は限定的です。"}
-                </p>
-                <p className="mt-2 text-xs text-gray-500">
-                  ニュース要因はAIスコアに織り込まれています。
-                </p>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-xs text-gray-400">ニュースAI評価</p>
+                  <p className="text-sm font-semibold text-amber-300">重要度 {renderStars(newsAnalysis.starRating)}</p>
+                </div>
+                <p className="mt-2 text-sm leading-6 text-gray-300">{newsAnalysis.summary}</p>
+                <div className="mt-3 flex flex-wrap gap-2 text-xs">
+                  <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-emerald-300">好材料 {newsAnalysis.positiveCount}</span>
+                  <span className="rounded-full border border-rose-500/30 bg-rose-500/10 px-3 py-1 text-rose-300">悪材料 {newsAnalysis.negativeCount}</span>
+                  <span className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-3 py-1 text-cyan-300">信頼度 {formatPercent(newsAnalysis.confidence)}</span>
+                </div>
+                {newsAnalysis.details.length > 0 ? (
+                  <ul className="mt-3 space-y-2 text-sm text-gray-300">
+                    {newsAnalysis.details.slice(0, 5).map((item, index) => (
+                      <li key={`${item.headline}-${index}`} className="rounded-md border border-gray-800 bg-gray-950 px-3 py-2">
+                        <p className="leading-6">{item.headline}</p>
+                        <p className="mt-1 text-xs text-gray-500">
+                          {item.sentiment === "positive" ? "好材料" : item.sentiment === "negative" ? "悪材料" : "中立"} / 重要度 {renderStars(item.importanceStars)}
+                        </p>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
               </div>
             ) : null}
 
@@ -494,12 +536,42 @@ export default function SearchBox() {
                 <button
                   type="button"
                   onClick={() => {
+                    setTepouSortMode("profit-factor");
+                    void fetchTepouRanking(false, "profit-factor");
+                  }}
+                  className={`rounded-lg px-3 py-2 text-sm font-semibold ${tepouSortMode === "profit-factor" ? "bg-cyan-500 text-white" : "bg-gray-800 text-gray-300"}`}
+                >
+                  PF順
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
                     setTepouSortMode("risk-reward");
                     void fetchTepouRanking(false, "risk-reward");
                   }}
                   className={`rounded-lg px-3 py-2 text-sm font-semibold ${tepouSortMode === "risk-reward" ? "bg-cyan-500 text-white" : "bg-gray-800 text-gray-300"}`}
                 >
                   リスクリワード順
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTepouSortMode("day-trader");
+                    void fetchTepouRanking(false, "day-trader");
+                  }}
+                  className={`rounded-lg px-3 py-2 text-sm font-semibold ${tepouSortMode === "day-trader" ? "bg-cyan-500 text-white" : "bg-gray-800 text-gray-300"}`}
+                >
+                  デイトレ向き
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTepouSortMode("swing-trader");
+                    void fetchTepouRanking(false, "swing-trader");
+                  }}
+                  className={`rounded-lg px-3 py-2 text-sm font-semibold ${tepouSortMode === "swing-trader" ? "bg-cyan-500 text-white" : "bg-gray-800 text-gray-300"}`}
+                >
+                  スイング向き
                 </button>
               </div>
 
@@ -524,9 +596,9 @@ export default function SearchBox() {
           {tepou30?.backtest ? (
             <div className="mt-4">
               <p className="text-xs text-gray-400">バックテスト画面</p>
-              <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-7">
+              <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-10">
               <div className="rounded-lg border border-gray-700 bg-gray-900 p-3">
-                <p className="text-xs text-gray-400">過去1年バックテスト</p>
+                <p className="text-xs text-gray-400">検証期間（1年〜最大3年）</p>
                 <p className="mt-1 text-lg font-semibold text-white">{tepou30.backtest.periodDays}日</p>
               </div>
               <div className="rounded-lg border border-gray-700 bg-gray-900 p-3">
@@ -535,23 +607,39 @@ export default function SearchBox() {
               </div>
               <div className="rounded-lg border border-gray-700 bg-gray-900 p-3">
                 <p className="text-xs text-gray-400">勝率</p>
-                <p className="mt-1 text-lg font-semibold text-emerald-400">{tepou30.backtest.winRate.toFixed(2)}%</p>
+                <p className="mt-1 text-lg font-semibold text-emerald-400">{formatSafePercent(tepou30.backtest.winRate, 2)}</p>
               </div>
               <div className="rounded-lg border border-gray-700 bg-gray-900 p-3">
                 <p className="text-xs text-gray-400">平均利益</p>
-                <p className="mt-1 text-lg font-semibold text-emerald-400">{tepou30.backtest.averageProfit.toFixed(2)}%</p>
+                <p className="mt-1 text-lg font-semibold text-emerald-400">{formatSafePercent(tepou30.backtest.averageProfit, 2)}</p>
               </div>
               <div className="rounded-lg border border-gray-700 bg-gray-900 p-3">
                 <p className="text-xs text-gray-400">平均損失</p>
-                <p className="mt-1 text-lg font-semibold text-rose-400">-{tepou30.backtest.averageLoss.toFixed(2)}%</p>
+                <p className="mt-1 text-lg font-semibold text-rose-400">{formatSafeSignedLossPercent(tepou30.backtest.averageLoss, 2)}</p>
               </div>
               <div className="rounded-lg border border-gray-700 bg-gray-900 p-3">
                 <p className="text-xs text-gray-400">最大ドローダウン</p>
-                <p className="mt-1 text-lg font-semibold text-amber-300">-{tepou30.backtest.maxDrawdown.toFixed(2)}%</p>
+                <p className="mt-1 text-lg font-semibold text-amber-300">{formatSafeSignedLossPercent(tepou30.backtest.maxDrawdown, 2)}</p>
               </div>
               <div className="rounded-lg border border-gray-700 bg-gray-900 p-3">
                 <p className="text-xs text-gray-400">期待値</p>
-                <p className={`mt-1 text-lg font-semibold ${tepou30.backtest.expectedValuePercent >= 0 ? "text-cyan-400" : "text-rose-400"}`}>{tepou30.backtest.expectedValuePercent.toFixed(2)}%</p>
+                <p className={`mt-1 text-lg font-semibold ${tepou30.backtest.expectedValuePercent >= 0 ? "text-cyan-400" : "text-rose-400"}`}>{formatSafePercent(tepou30.backtest.expectedValuePercent, 2)}</p>
+              </div>
+              <div className="rounded-lg border border-gray-700 bg-gray-900 p-3">
+                <p className="text-xs text-gray-400">Profit Factor</p>
+                <p className="mt-1 text-lg font-semibold text-cyan-300">{formatFixedNumber(tepou30.backtest.profitFactor, 2)}</p>
+              </div>
+              <div className="rounded-lg border border-gray-700 bg-gray-900 p-3">
+                <p className="text-xs text-gray-400">Sharpe Ratio</p>
+                <p className="mt-1 text-lg font-semibold text-cyan-300">{formatFixedNumber(tepou30.backtest.sharpeRatio, 2)}</p>
+              </div>
+              <div className="rounded-lg border border-gray-700 bg-gray-900 p-3">
+                <p className="text-xs text-gray-400">Sortino Ratio</p>
+                <p className="mt-1 text-lg font-semibold text-cyan-300">{formatFixedNumber(tepou30.backtest.sortinoRatio, 2)}</p>
+              </div>
+              <div className="rounded-lg border border-gray-700 bg-gray-900 p-3">
+                <p className="text-xs text-gray-400">Calmar Ratio</p>
+                <p className="mt-1 text-lg font-semibold text-cyan-300">{formatFixedNumber(tepou30.backtest.calmarRatio, 2)}</p>
               </div>
               </div>
             </div>
@@ -570,14 +658,14 @@ export default function SearchBox() {
           ) : null}
 
           {tepou30?.data.length ? (
-            <div className="mt-4 space-y-3">
+            <div className="mt-4 max-h-[70vh] space-y-3 overflow-y-auto pr-1">
               {tepou30.data.map((item) => (
                 <div key={item.code} className="rounded-lg border border-gray-700 bg-gray-900 p-4">
                   <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
                     <div>
                       <p className="text-xs text-gray-400">順位 / 銘柄</p>
                       <p className="mt-1 text-lg font-bold text-white">#{item.rank} {item.code}</p>
-                      <p className="text-sm text-gray-300">{item.name}</p>
+                      <p className="text-sm text-gray-300 break-all">{item.name}</p>
                     </div>
                     <div>
                       <p className="text-xs text-gray-400">AIスコア</p>
@@ -597,7 +685,16 @@ export default function SearchBox() {
                     </div>
                     <div>
                       <p className="text-xs text-gray-400">勝率 / 信頼度 / 期待値</p>
-                      <p className="mt-1 text-sm text-white">{formatPercent(item.winRate)} / {formatPercent(item.confidence)} / {item.expectedValuePercent.toFixed(2)}%</p>
+                      <p className="mt-1 text-sm text-white">{formatPercent(item.winRate)} / {formatPercent(item.confidence)} / {formatSafePercent(item.expectedValuePercent, 2)}</p>
+                      {typeof item.newsImportanceStars === "number" ? (
+                        <p className="mt-1 text-xs text-amber-300">ニュース {renderStars(item.newsImportanceStars)}（好{item.newsPositiveCount ?? 0} / 悪{item.newsNegativeCount ?? 0}）</p>
+                      ) : null}
+                      {item.newsSummary ? (
+                        <p className="mt-1 text-xs text-gray-300">
+                          {item.newsSentiment === "bullish" ? "好材料寄り" : item.newsSentiment === "bearish" ? "悪材料寄り" : "中立"}
+                          : {item.newsSummary}
+                        </p>
+                      ) : null}
                     </div>
                   </div>
                 </div>

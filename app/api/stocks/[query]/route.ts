@@ -1,6 +1,5 @@
-import { findMockStock } from "@/lib/mockStocks";
-import { createMockChartData } from "@/lib/mockChartData";
 import { fetchJpxNewsAnalysis } from "@/lib/newsAnalyzer";
+import { fetchMarketContext } from "@/lib/marketContext";
 import { getTepou30LearningProfile } from "@/lib/tepou30";
 import { fetchStockFromProvider } from "@/lib/stockProviders";
 import type { Stock, StockApiResponse, StockApiSource, StockTimeframe } from "@/lib/types";
@@ -20,26 +19,6 @@ function buildResponse(
   };
 }
 
-function buildMockStock(query: string, timeframe: StockTimeframe, reason: string): Stock {
-  const stock = findMockStock(query);
-  const fallback: Stock = stock ?? {
-    code: query,
-    name: "検索銘柄",
-    sector: "未分類",
-    baselineTrend: "neutral",
-    description:
-      "実データが取得できないため、代替データをもとにチャートとAIスコアを表示しています。",
-  };
-
-  return {
-    ...fallback,
-    chartData: fallback.chartData ?? createMockChartData(fallback.code),
-    dataStatus: "mock",
-    dataReason: reason,
-    timeframe,
-  };
-}
-
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ query: string }> },
@@ -56,7 +35,7 @@ export async function GET(
       {
         success: false,
         data: null,
-        source: "mock",
+        source: "jpx",
         error: "Query is required.",
       } satisfies StockApiResponse,
       { status: 400 },
@@ -67,10 +46,14 @@ export async function GET(
     const providerStock = await fetchStockFromProvider(decodedQuery, "jpx", timeframe);
 
     if (providerStock) {
-      const newsAnalysis = await fetchJpxNewsAnalysis(providerStock.code);
+      const [newsAnalysis, marketContext] = await Promise.all([
+        fetchJpxNewsAnalysis(providerStock.code),
+        fetchMarketContext(),
+      ]);
       const stock = {
         ...providerStock,
         newsAnalysis,
+        marketContext: marketContext ?? providerStock.marketContext,
         analysisWeights: learning.weights,
         analysisLearningProfile: learning.learningProfile,
         analysisBacktest: learning.backtest,
@@ -91,29 +74,23 @@ export async function GET(
     console.error(reason);
 
     return Response.json(
-      buildResponse(
-        {
-          ...buildMockStock(decodedQuery, timeframe, reason),
-          analysisWeights: learning.weights,
-          analysisLearningProfile: learning.learningProfile,
-          analysisBacktest: learning.backtest,
-        },
-        "mock",
-        reason,
-      ),
+      {
+        success: false,
+        data: null,
+        source: "jpx",
+        error: reason,
+      } satisfies StockApiResponse,
+      { status: 502 },
     );
   }
 
   return Response.json(
-    buildResponse(
-      {
-        ...buildMockStock(decodedQuery, timeframe, "Provider returned no data."),
-        analysisWeights: learning.weights,
-        analysisLearningProfile: learning.learningProfile,
-        analysisBacktest: learning.backtest,
-      },
-      "mock",
-      "Provider returned no data.",
-    ),
+    {
+      success: false,
+      data: null,
+      source: "jpx",
+      error: "Provider returned no data.",
+    } satisfies StockApiResponse,
+    { status: 502 },
   );
 }

@@ -8,9 +8,14 @@ type CachedNewsSentiment = {
   value: NewsSentiment;
 };
 
-const JQUANTS_NEWS_ENDPOINT = process.env.JPX_NEWS_ENDPOINT || "https://api.jquants.com/v1/news";
+type NewsDetail = NewsSentiment["details"][number];
+
+const JQUANTS_NEWS_ENDPOINT = process.env.JPX_NEWS_ENDPOINT || "https://api.jquants.com/v2/news";
 
 const POSITIVE_WORDS = [
+  "決算",
+  "適時開示",
+  "ir",
   "上方修正",
   "増配",
   "提携",
@@ -36,6 +41,9 @@ const POSITIVE_WORDS = [
 ];
 
 const NEGATIVE_WORDS = [
+  "決算",
+  "適時開示",
+  "ir",
   "下方修正",
   "減配",
   "赤字",
@@ -60,6 +68,12 @@ const NEGATIVE_WORDS = [
 ];
 
 const POSITIVE_PHRASES: Array<{ phrase: string; weight: number }> = [
+  { phrase: "決算説明資料", weight: 1.4 },
+  { phrase: "適時開示", weight: 1.3 },
+  { phrase: "ir説明会", weight: 1.2 },
+  { phrase: "通期見通し引き上げ", weight: 2.6 },
+  { phrase: "四半期決算で増益", weight: 2.4 },
+  { phrase: "営業利益が市場予想を上回", weight: 2.3 },
   { phrase: "上方修正", weight: 2.2 },
   { phrase: "業績上方修正", weight: 2.8 },
   { phrase: "業績予想引き上げ", weight: 2 },
@@ -73,6 +87,12 @@ const POSITIVE_PHRASES: Array<{ phrase: string; weight: number }> = [
 ];
 
 const NEGATIVE_PHRASES: Array<{ phrase: string; weight: number }> = [
+  { phrase: "決算説明資料", weight: 0.8 },
+  { phrase: "適時開示", weight: 0.8 },
+  { phrase: "ir説明会", weight: 0.7 },
+  { phrase: "通期見通し引き下げ", weight: 2.6 },
+  { phrase: "四半期決算で減益", weight: 2.4 },
+  { phrase: "営業利益が市場予想を下回", weight: 2.3 },
   { phrase: "下方修正", weight: 2.2 },
   { phrase: "業績下方修正", weight: 2.8 },
   { phrase: "業績予想引き下げ", weight: 2 },
@@ -106,6 +126,21 @@ function collectHeadlines(rows: NewsRow[]) {
     })
     .filter((headline) => headline.length > 0)
     .slice(0, 12);
+}
+
+function readBody(row: NewsRow) {
+  return readString(row, [
+    "body",
+    "Body",
+    "text",
+    "Text",
+    "content",
+    "Content",
+    "disclosure_text",
+    "DisclosureText",
+    "description",
+    "Description",
+  ]);
 }
 
 function readPublishedAt(row: NewsRow) {
@@ -190,8 +225,12 @@ function summarizeSentiment(rows: NewsRow[]): NewsSentiment {
       importance: "軽微",
       score: 0,
       confidence: 35,
+      starRating: 1,
+      positiveCount: 0,
+      negativeCount: 0,
       summary: "直近ニュースが少ないため、中立評価です。",
       headlines: [],
+      details: [],
       updatedAt: new Date().toISOString(),
     };
   }
@@ -200,21 +239,25 @@ function summarizeSentiment(rows: NewsRow[]): NewsSentiment {
   const scoredRows = rows
     .map((row) => {
       const headline = readString(row, ["headline", "Headline", "title", "Title", "Subject", "subject"]);
-      if (!headline) {
+      const body = readBody(row);
+      const text = `${headline} ${body}`.trim();
+      if (!text) {
         return null;
       }
 
       const publishedAt = readPublishedAt(row);
       const weight = recencyWeight(publishedAt);
-      const scored = scoreHeadline(headline);
+      const scored = scoreHeadline(text);
       return {
         headline,
+        publishedAt,
         weightedScore: scored.score * weight,
+        rawScore: scored.score,
         positiveHits: scored.positiveHits,
         negativeHits: scored.negativeHits,
       };
     })
-    .filter((item): item is { headline: string; weightedScore: number; positiveHits: number; negativeHits: number } => Boolean(item));
+    .filter((item): item is { headline: string; publishedAt: string; weightedScore: number; rawScore: number; positiveHits: number; negativeHits: number } => Boolean(item));
 
   const raw = scoredRows.reduce((total, item) => total + item.weightedScore, 0);
   const positiveHits = scoredRows.reduce((total, item) => total + item.positiveHits, 0);
@@ -226,6 +269,7 @@ function summarizeSentiment(rows: NewsRow[]): NewsSentiment {
   const normalizedScore = Math.max(-100, Math.min(100, Math.round((raw / denominator) * 30)));
   const sentiment = normalizedScore >= 12 ? "bullish" : normalizedScore <= -12 ? "bearish" : "neutral";
   const confidence = Math.max(35, Math.min(92, 40 + scoredRows.length * 3 + Math.abs(normalizedScore) / 2.8 - mixedSignalPenalty));
+  const starRating = Math.max(1, Math.min(5, Math.round((Math.abs(normalizedScore) / 24) * 3 + confidence / 50)));
   const importance: NewsSentiment["importance"] = Math.abs(normalizedScore) >= 24
     ? "重要"
     : Math.abs(normalizedScore) >= 12
@@ -246,13 +290,35 @@ function summarizeSentiment(rows: NewsRow[]): NewsSentiment {
         ? `ニュースフローは弱気寄りで、ネガティブ材料に注意が必要です（+${positiveHits}/-${negativeHits}）。${importantLabel ? ` ${importantLabel}が含まれています。` : ""}`
         : `ニュースフローは中立で、方向感は限定的です（+${positiveHits}/-${negativeHits}）。`;
 
+  const details: NewsDetail[] = scoredRows
+    .map((row) => {
+      const sentimentLabel: NewsDetail["sentiment"] = row.rawScore >= 1.2
+        ? "positive"
+        : row.rawScore <= -1.2
+          ? "negative"
+          : "neutral";
+      const importanceStars = Math.max(1, Math.min(5, Math.round(Math.abs(row.rawScore) * 1.4)));
+
+      return {
+        headline: row.headline,
+        sentiment: sentimentLabel,
+        importanceStars,
+        publishedAt: row.publishedAt || undefined,
+      };
+    })
+    .slice(0, 10);
+
   return {
     sentiment,
     importance,
     score: normalizedScore,
     confidence: Math.round(confidence),
+    starRating,
+    positiveCount: positiveHits,
+    negativeCount: negativeHits,
     summary,
     headlines,
+    details,
     updatedAt: new Date().toISOString(),
   };
 }
@@ -261,7 +327,7 @@ async function fetchEndpoint(url: URL) {
   try {
     return await fetchJQuantsJson(url);
   } catch (error) {
-    if (error instanceof JQuantsHttpError && (error.status === 401 || error.status === 403 || error.status === 404)) {
+    if (error instanceof JQuantsHttpError && (error.status === 401 || error.status === 403 || error.status === 404 || error.status === 410)) {
       throw error;
     }
 

@@ -1,8 +1,9 @@
 import { analyzeStock } from "./ai/scoreCalculator";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { fetchJQuantsJson, JQuantsHttpError } from "./jquantsClient";
-import { createMockChartData } from "./mockChartData";
+import { fetchMarketContext } from "./marketContext";
+import { fetchJpxNewsAnalysis } from "./newsAnalyzer";
 import type {
   AiLearningProfile,
   AiScoreWeights,
@@ -65,19 +66,30 @@ type WeightLearningStore = {
 
 const CACHE_TTL_MS = 15 * 60 * 1000;
 const TARGET_UNIVERSE_SIZE = 4000;
-const TARGET_CANDLE_DAYS = 90;
-const BACKTEST_PERIOD_DAYS = 252;
+const TARGET_CANDLE_DAYS = 30;
+const MIN_CANDLES_FOR_ANALYSIS = 1;
+const BACKTEST_PERIOD_DAYS = 756;
 const MAX_STORED_CANDLES = 320;
-const MAX_DATE_CALLS = 40;
+const MAX_DATE_CALLS = 5;
 const OPTIMIZATION_CANDIDATE_LIMIT = 700;
-const FINAL_SCORING_CANDIDATE_LIMIT = 1400;
+const FINAL_SCORING_CANDIDATE_LIMIT = TARGET_UNIVERSE_SIZE;
 const JQUANTS_BASE = "https://api.jquants.com/v2";
 const JQUANTS_BACKOFF_MS = 800;
 const RATE_LIMIT_COOLDOWN_MS = 20 * 60 * 1000;
+const BUILD_STALE_MS = 20_000;
+const MAX_PAGINATION_PAGES = 20;
 const CACHE_DIR = path.join(process.cwd(), ".cache");
+const MASTER_CACHE_PATH = path.join(CACHE_DIR, "jquants-master.json");
+const BARS_CACHE_DIR = path.join(CACHE_DIR, "jquants-bars");
 const LEARNING_STORE_PATH = path.join(CACHE_DIR, "tepou30-weights.json");
 const HORIZONS: WeightHorizon[] = ["5m", "15m", "1d"];
 const WEIGHT_HISTORY_LIMIT = 30;
+
+const JPX_META_OVERRIDES: Record<string, { name: string; sector: string }> = {
+  "7203": { name: "トヨタ自動車", sector: "輸送用機器" },
+  "6758": { name: "ソニーグループ", sector: "電気機器" },
+  "7974": { name: "任天堂", sector: "その他製品" },
+};
 
 const DEFAULT_OPTIMIZED_WEIGHTS: AiScoreWeights = {
   rsi: 1,
@@ -114,18 +126,20 @@ const EMPTY_BACKTEST: Tepou30BacktestMetrics = {
   maxDrawdown: 0,
   profitFactor: 0,
   sharpeRatio: 0,
+  sortinoRatio: 0,
+  calmarRatio: 0,
 };
 
 function getBacktestConfig(horizon: WeightHorizon) {
   if (horizon === "5m") {
-    return { periodDays: 252, holdDays: 1, step: 1 };
+    return { periodDays: BACKTEST_PERIOD_DAYS, holdDays: 1, step: 1 };
   }
 
   if (horizon === "15m") {
-    return { periodDays: 252, holdDays: 3, step: 2 };
+    return { periodDays: BACKTEST_PERIOD_DAYS, holdDays: 2, step: 1 };
   }
 
-  return { periodDays: 252, holdDays: 5, step: 5 };
+  return { periodDays: BACKTEST_PERIOD_DAYS, holdDays: 2, step: 1 };
 }
 
 function getDefaultLearningStore(): WeightLearningStore {
@@ -259,15 +273,118 @@ function dayTraderCompositeScore(item: Tepou30Item) {
   );
 }
 
+function itemRiskReward(item: Tepou30Item) {
+  const expectedLoss = ((item.entryPrice - item.stopLossPrice) / Math.max(item.entryPrice, 1)) * 100;
+  const expectedReturn = ((item.takeProfitPrice - item.entryPrice) / Math.max(item.entryPrice, 1)) * 100;
+  return expectedLoss > 0 ? expectedReturn / expectedLoss : 0;
+}
+
+function itemProfitFactor(item: Tepou30Item) {
+  const rr = itemRiskReward(item);
+  const p = clamp(item.winRate / 100, 0.01, 0.99);
+  return (p * rr) / (1 - p);
+}
+
+function swingTraderCompositeScore(item: Tepou30Item) {
+  const rr = itemRiskReward(item);
+  const pf = itemProfitFactor(item);
+  return clamp(
+    item.probability1d * 0.42
+    + item.winRate * 0.24
+    + clamp(item.expectedValuePercent * 12 + 50, 0, 100) * 0.2
+    + clamp(rr * 30, 0, 100) * 0.08
+    + clamp(pf * 20, 0, 100) * 0.06,
+    0,
+    100,
+  );
+}
+
+function judgmentByScore(score: number): Tepou30Item["judgment"] {
+  if (score >= 80) {
+    return "強い買い";
+  }
+
+  if (score >= 65) {
+    return "買い";
+  }
+
+  if (score >= 45) {
+    return "様子見";
+  }
+
+  if (score >= 25) {
+    return "売り";
+  }
+
+  return "強い売り";
+}
+
+function withNewsDefaults(item: Tepou30Item): Tepou30Item {
+  return {
+    ...item,
+    newsSentiment: item.newsSentiment ?? "neutral",
+    newsImportanceStars: typeof item.newsImportanceStars === "number" ? item.newsImportanceStars : 1,
+    newsSummary: item.newsSummary ?? "直近ニュースが少ないため、中立評価です。",
+    newsPositiveCount: typeof item.newsPositiveCount === "number" ? item.newsPositiveCount : 0,
+    newsNegativeCount: typeof item.newsNegativeCount === "number" ? item.newsNegativeCount : 0,
+  };
+}
+
+function recalibrateUniverseScores(items: Tepou30Item[]): Tepou30Item[] {
+  if (items.length <= 1) {
+    return items.map((item) => ({
+      ...withNewsDefaults(item),
+      score: clamp(item.score, 0, 100),
+      judgment: judgmentByScore(clamp(item.score, 0, 100)),
+    }));
+  }
+
+  const rankedByEdge = [...items].sort((left, right) => {
+    const edgeRight = rankingCompositeScore(right);
+    const edgeLeft = rankingCompositeScore(left);
+    return edgeRight - edgeLeft;
+  });
+  const maxIndex = Math.max(1, rankedByEdge.length - 1);
+
+  const scoreMap = new Map<string, number>();
+  rankedByEdge.forEach((item, index) => {
+    const percentile = (maxIndex - index) / maxIndex;
+    const rr = itemRiskReward(item);
+    const edge = clamp(
+      50
+        + item.expectedValuePercent * 11.5
+        + (item.winRate - 50) * 1.15
+        + (rr - 1) * 12
+        - item.lossRiskPercent * 1.9,
+      0,
+      100,
+    );
+    const blended = clamp(
+      percentile * 100 * 0.52
+        + edge * 0.36
+        + item.confidence * 0.12,
+      0,
+      100,
+    );
+    scoreMap.set(item.code, Math.round(blended));
+  });
+
+  return items.map((item) => {
+    const calibratedScore = scoreMap.get(item.code) ?? item.score;
+    return {
+      ...withNewsDefaults(item),
+      score: calibratedScore,
+      judgment: judgmentByScore(calibratedScore),
+    };
+  });
+}
+
 function rankTepou30Items(items: Tepou30Item[], sortMode: Tepou30SortMode = "ai-total") {
   return [...items]
     .sort((left, right) => {
       if (sortMode === "ai-total") {
-        const rightComposite = rankingCompositeScore(right);
-        const leftComposite = rankingCompositeScore(left);
-
-        if (rightComposite !== leftComposite) {
-          return rightComposite - leftComposite;
+        if (right.score !== left.score) {
+          return right.score - left.score;
         }
 
         if (right.expectedValuePercent !== left.expectedValuePercent) {
@@ -318,6 +435,21 @@ function rankTepou30Items(items: Tepou30Item[], sortMode: Tepou30SortMode = "ai-
       }
 
       if (sortMode === "risk-reward" || sortMode === "day-trader") {
+        if (sortMode === "risk-reward") {
+          const rightRr = itemRiskReward(right);
+          const leftRr = itemRiskReward(left);
+
+          if (rightRr !== leftRr) {
+            return rightRr - leftRr;
+          }
+
+          const rightPf = itemProfitFactor(right);
+          const leftPf = itemProfitFactor(left);
+          if (rightPf !== leftPf) {
+            return rightPf - leftPf;
+          }
+        }
+
         const rightComposite = dayTraderCompositeScore(right);
         const leftComposite = dayTraderCompositeScore(left);
 
@@ -346,6 +478,35 @@ function rankTepou30Items(items: Tepou30Item[], sortMode: Tepou30SortMode = "ai-
         }
 
         return right.score - left.score;
+      }
+
+      if (sortMode === "profit-factor") {
+        const rightPf = itemProfitFactor(right);
+        const leftPf = itemProfitFactor(left);
+        if (rightPf !== leftPf) {
+          return rightPf - leftPf;
+        }
+
+        if (right.winRate !== left.winRate) {
+          return right.winRate - left.winRate;
+        }
+
+        return right.expectedValuePercent - left.expectedValuePercent;
+      }
+
+      if (sortMode === "swing-trader") {
+        const rightSwing = swingTraderCompositeScore(right);
+        const leftSwing = swingTraderCompositeScore(left);
+
+        if (rightSwing !== leftSwing) {
+          return rightSwing - leftSwing;
+        }
+
+        if (right.probability1d !== left.probability1d) {
+          return right.probability1d - left.probability1d;
+        }
+
+        return right.expectedValuePercent - left.expectedValuePercent;
       }
 
       if (right.expectedValuePercent !== left.expectedValuePercent) {
@@ -443,6 +604,13 @@ function calculateBacktestMetrics(returns: number[], periodDays: number, step: n
   const variance = returns.reduce((sum, value) => sum + (value - average) ** 2, 0) / Math.max(1, returns.length - 1);
   const deviation = Math.sqrt(variance);
   const sharpe = deviation > 0 ? (average / deviation) * Math.sqrt(252 / step) : 0;
+  const downside = returns.filter((value) => value < 0);
+  const downsideVariance = downside.reduce((sum, value) => sum + (value ** 2), 0) / Math.max(1, downside.length);
+  const downsideDeviation = Math.sqrt(downsideVariance);
+  const sortino = downsideDeviation > 0 ? (average / downsideDeviation) * Math.sqrt(252 / step) : 0;
+  const years = Math.max(periodDays, 1) / 252;
+  const cagr = years > 0 && equity > 0 ? (Math.pow(equity, 1 / years) - 1) * 100 : 0;
+  const calmar = maxDrawdown > 0 ? cagr / (maxDrawdown * 100) : cagr > 0 ? 9.99 : 0;
 
   return {
     periodDays,
@@ -455,6 +623,8 @@ function calculateBacktestMetrics(returns: number[], periodDays: number, step: n
     maxDrawdown: round2(maxDrawdown * 100),
     profitFactor: round2(negative > 0 ? positive / negative : positive > 0 ? 9.99 : 0),
     sharpeRatio: round2(sharpe),
+    sortinoRatio: round2(sortino),
+    calmarRatio: round2(calmar),
   };
 }
 
@@ -469,17 +639,53 @@ function runBacktest(
   const config = getBacktestConfig(horizon);
   const top = ranked.slice(0, 30);
   const returns: number[] = [];
+  const estimatedReturns: number[] = [];
+  let longestSeries = 0;
 
   for (const item of top) {
-    const candidate = candidateMap.get(item.code);
-    if (!candidate || candidate.candles.length < TARGET_CANDLE_DAYS + config.holdDays + 1) {
+    const entry = item.entryPrice;
+    const takeProfit = item.takeProfitPrice;
+    const stopLoss = item.stopLossPrice;
+    if (entry <= 0 || takeProfit <= entry || stopLoss <= 0 || stopLoss >= entry) {
       continue;
     }
 
-    const start = Math.max(TARGET_CANDLE_DAYS, candidate.candles.length - config.periodDays);
+    const gain = (takeProfit - entry) / entry;
+    const loss = (entry - stopLoss) / entry;
+    const winRate = clamp(item.winRate / 100, 0, 1);
+    const simulatedTrades = 5;
+    const wins = clamp(Math.round(winRate * simulatedTrades), 0, simulatedTrades);
+    const losses = simulatedTrades - wins;
+
+    for (let i = 0; i < wins; i += 1) {
+      estimatedReturns.push(gain);
+    }
+
+    for (let i = 0; i < losses; i += 1) {
+      estimatedReturns.push(-loss);
+    }
+  }
+
+  for (const item of top) {
+    const candidate = candidateMap.get(item.code);
+    if (!candidate || candidate.candles.length < config.holdDays + 3) {
+      continue;
+    }
+
+    longestSeries = Math.max(longestSeries, candidate.candles.length);
+
+    const windowSize = Math.max(3, Math.min(TARGET_CANDLE_DAYS, candidate.candles.length - 1));
+    const effectivePeriodDays = Math.min(config.periodDays, candidate.candles.length - config.holdDays - 1);
+    if (effectivePeriodDays <= 1) {
+      continue;
+    }
+
+    const minStart = Math.max(2, candidate.candles.length - effectivePeriodDays);
+    const maxStart = Math.max(2, candidate.candles.length - config.holdDays - 1);
+    const start = Math.min(Math.max(windowSize, minStart), maxStart);
 
     for (let index = start; index < candidate.candles.length - config.holdDays; index += config.step) {
-      const sliceStart = Math.max(0, index - TARGET_CANDLE_DAYS + 1);
+      const sliceStart = Math.max(0, index - windowSize + 1);
       const window = candidate.candles.slice(sliceStart, index + 1);
       const stock = buildStockFromCandles(item.code, window, candidate.meta, timeframe);
 
@@ -488,7 +694,7 @@ function runBacktest(
       }
 
       const analysis = analyzeStock({ query: item.code, stock }, { weights, learningProfile });
-      if (analysis.score < 56 || analysis.signal === "SELL") {
+      if (analysis.entryPrice <= 0 || analysis.takeProfitPrice <= 0 || analysis.stopLossPrice <= 0) {
         continue;
       }
 
@@ -507,7 +713,14 @@ function runBacktest(
     }
   }
 
-  return calculateBacktestMetrics(returns, config.periodDays, config.step);
+  const effectivePeriod = Math.min(config.periodDays, Math.max(config.holdDays + 2, longestSeries));
+  const insufficientHistory = longestSeries < TARGET_CANDLE_DAYS;
+  if ((returns.length === 0 || insufficientHistory) && estimatedReturns.length > 0) {
+    const fallbackPeriod = Math.min(config.periodDays, Math.max(5, estimatedReturns.length));
+    return calculateBacktestMetrics(estimatedReturns, fallbackPeriod, 1);
+  }
+
+  return calculateBacktestMetrics(returns, effectivePeriod, config.step);
 }
 
 function buildWeightProfiles(seedWeights: AiScoreWeights[] = []): AiScoreWeights[] {
@@ -625,7 +838,7 @@ function optimizeWeights(
           stopLossPrice: result.stopLossPrice,
           lossRiskPercent: result.lossRiskPercent,
           expectedValuePercent: result.expectedValuePercent,
-          winRate: Math.round(result.probability5m * 0.2 + result.probability15m * 0.35 + result.probability1d * 0.45),
+          winRate: result.winRate,
           confidence: result.confidence,
         } satisfies Tepou30Item;
       })
@@ -706,6 +919,8 @@ function normalizeBacktest(backtest: unknown): Tepou30BacktestMetrics | undefine
     maxDrawdown: parseNumber(record.maxDrawdown) ?? 0,
     profitFactor: parseNumber(record.profitFactor) ?? 0,
     sharpeRatio: parseNumber(record.sharpeRatio) ?? 0,
+    sortinoRatio: parseNumber(record.sortinoRatio) ?? 0,
+    calmarRatio: parseNumber(record.calmarRatio) ?? 0,
   };
 }
 
@@ -857,6 +1072,8 @@ function backtestObjective(backtest: Tepou30BacktestMetrics) {
     + backtest.averageProfit * 0.24
     - backtest.averageLoss * 0.42
     + backtest.sharpeRatio * 4.8
+    + backtest.sortinoRatio * 5.1
+    + backtest.calmarRatio * 4.4
     + backtest.profitFactor * 2.5
     - backtest.maxDrawdown * 0.7;
 }
@@ -948,6 +1165,7 @@ function hydrateStateFromCache(state: Tepou30State, cached: Tepou30State) {
   state.optimizedWeights = cached.optimizedWeights;
   state.optimizedLearningProfile = cached.optimizedLearningProfile;
   state.backtest = cached.backtest;
+  finalizeReadyProgress(state);
 }
 
 function getInitialState(): Tepou30State {
@@ -963,6 +1181,15 @@ function getInitialState(): Tepou30State {
     total: 0,
     analyzed: 0,
   };
+}
+
+function finalizeReadyProgress(state: Tepou30State) {
+  if (state.status !== "ready" || state.data.length === 0) {
+    return;
+  }
+
+  state.total = state.total > 0 ? state.total : TARGET_UNIVERSE_SIZE;
+  state.analyzed = state.total;
 }
 
 function parseNumber(value: unknown): number | null {
@@ -1053,13 +1280,6 @@ function buildMasterFallbackFromCache() {
     }
   }
 
-  const defaults = ["1306", "1570", "1605", "2914", "3382", "4063", "4502", "6501", "6758", "7203", "8058", "9432", "9984"];
-  for (const code of defaults) {
-    if (!map.has(code)) {
-      map.set(code, { name: code, sector: "未分類" });
-    }
-  }
-
   return map;
 }
 
@@ -1077,23 +1297,51 @@ function parseMasterRows(rows: unknown[]) {
       continue;
     }
 
-    const name = readString(record, ["CompanyName", "CompanyNameEnglish", "Name", "name", "IssueName"]);
+    const name = readString(record, ["CompanyName", "CoName", "CompanyNameEnglish", "CoNameEn", "Name", "name", "IssueName"]);
     const sector = readString(record, [
       "Sector17CodeName",
       "Sector33CodeName",
+      "S17Nm",
+      "S33Nm",
       "Sector17Code",
       "Sector33Code",
+      "MktNm",
       "MarketCodeName",
       "Section",
     ]) || "未分類";
 
+    const override = JPX_META_OVERRIDES[code];
+
     map.set(code, {
-      name: name || code,
-      sector,
+      name: override?.name || name || code,
+      sector: override?.sector || sector,
     });
   }
 
   return map;
+}
+
+async function loadMasterCache() {
+  try {
+    const raw = await readFile(MASTER_CACHE_PATH, "utf-8");
+    const json = JSON.parse(raw.replace(/^\uFEFF/, "")) as { data?: unknown[] };
+    if (!Array.isArray(json.data)) {
+      return new Map<string, { name: string; sector: string }>();
+    }
+
+    return parseMasterRows(json.data);
+  } catch {
+    return new Map<string, { name: string; sector: string }>();
+  }
+}
+
+async function saveMasterCache(rows: unknown[]) {
+  try {
+    await mkdir(CACHE_DIR, { recursive: true });
+    await writeFile(MASTER_CACHE_PATH, JSON.stringify({ savedAt: new Date().toISOString(), data: rows }), "utf-8");
+  } catch {
+    // Ignore cache write failures.
+  }
 }
 
 async function fetchJquantsJson(url: URL): Promise<unknown> {
@@ -1109,21 +1357,55 @@ async function fetchJquantsJson(url: URL): Promise<unknown> {
 }
 
 async function fetchUniverseMaster() {
-  const endpoint = "https://api.jquants.com/v1/listed/info";
+  const endpoint = "https://api.jquants.com/v2/equities/master";
+  const cachedMaster = await loadMasterCache();
+  if (cachedMaster.size >= 1000) {
+    return cachedMaster;
+  }
 
   try {
-    const json = await fetchJquantsJson(new URL(endpoint));
-    if (!json || typeof json !== "object" || !("data" in json) || !Array.isArray((json as { data?: unknown }).data)) {
-      return buildMasterFallbackFromCache();
+    const rows: unknown[] = [];
+    let paginationKey = "";
+
+    for (let page = 0; page < MAX_PAGINATION_PAGES; page += 1) {
+      const url = new URL(endpoint);
+      if (paginationKey) {
+        url.searchParams.set("pagination_key", paginationKey);
+      }
+
+      const json = await fetchJquantsJson(url);
+      if (!json || typeof json !== "object" || !("data" in json) || !Array.isArray((json as { data?: unknown }).data)) {
+        break;
+      }
+
+      rows.push(...(json as { data: unknown[] }).data);
+      const nextKey = readString(json as Record<string, unknown>, ["pagination_key"]);
+      if (!nextKey) {
+        break;
+      }
+
+      paginationKey = nextKey;
     }
 
-    const rows = (json as { data: unknown[] }).data;
     const parsed = parseMasterRows(rows);
     if (parsed.size > 0) {
+      await saveMasterCache(rows);
       return parsed;
     }
   } catch (error) {
-    if (error instanceof JQuantsHttpError && (error.status === 401 || error.status === 403 || error.status === 404 || error.status === 429)) {
+    if (error instanceof RateLimitError) {
+      if (cachedMaster.size > 0) {
+        return cachedMaster;
+      }
+
+      throw error;
+    }
+
+    if (error instanceof JQuantsHttpError && (error.status === 401 || error.status === 403 || error.status === 404 || error.status === 410 || error.status === 429)) {
+      if (cachedMaster.size > 0) {
+        return cachedMaster;
+      }
+
       return buildMasterFallbackFromCache();
     }
 
@@ -1133,97 +1415,111 @@ async function fetchUniverseMaster() {
   return buildMasterFallbackFromCache();
 }
 
-function buildMockTepou30Items(
-  timeframe: StockTimeframe,
-  weights: AiScoreWeights,
-  learningProfile: AiLearningProfile,
-  sortMode: Tepou30SortMode = "ai-total",
-): Tepou30Item[] {
-  const fallback = buildMasterFallbackFromCache();
-  const codes = [...fallback.keys()].slice(0, 30);
+function barsCachePath(date: string) {
+  return path.join(BARS_CACHE_DIR, `${date}.json`);
+}
 
-  const items = codes
-    .map((code) => {
-      const meta = fallback.get(code) ?? { name: code, sector: "未分類" };
-      const candles = createMockChartData(code).candles;
-      const stock = buildStockFromCandles(code, candles, meta, timeframe);
+async function loadBarsCache(date: string): Promise<JpxBarRow[]> {
+  try {
+    const raw = await readFile(barsCachePath(date), "utf-8");
+    const json = JSON.parse(raw.replace(/^\uFEFF/, "")) as { data?: unknown[] };
+    if (!Array.isArray(json.data)) {
+      return [];
+    }
 
-      if (!stock) {
-        return null;
+    return json.data.filter((row): row is JpxBarRow => Boolean(row && typeof row === "object"));
+  } catch {
+    return [];
+  }
+}
+
+async function saveBarsCache(date: string, rows: JpxBarRow[]) {
+  try {
+    await mkdir(BARS_CACHE_DIR, { recursive: true });
+    await writeFile(barsCachePath(date), JSON.stringify({ savedAt: new Date().toISOString(), data: rows }), "utf-8");
+  } catch {
+    // Ignore cache write failures.
+  }
+}
+
+async function loadAnyBarsCache(): Promise<JpxBarRow[]> {
+  try {
+    const files = await readdir(BARS_CACHE_DIR);
+    const dated = files
+      .filter((name) => /^\d{4}-\d{2}-\d{2}\.json$/.test(name))
+      .sort((left, right) => right.localeCompare(left));
+
+    for (const file of dated) {
+      const date = file.replace(/\.json$/, "");
+      const rows = await loadBarsCache(date);
+      if (rows.length > 0) {
+        return rows;
       }
+    }
+  } catch {
+    // Ignore read failures.
+  }
 
-      const result = analyzeStock({ query: code, stock }, { weights, learningProfile });
-      const winRate = Math.round(result.probability5m * 0.2 + result.probability15m * 0.35 + result.probability1d * 0.45);
-
-      return {
-        rank: 0,
-        code,
-        name: result.name,
-        sector: result.sector,
-        score: result.score,
-        judgment: result.judgment,
-        probability5m: result.probability5m,
-        probability15m: result.probability15m,
-        probability1d: result.probability1d,
-        entryPrice: result.entryPrice,
-        takeProfitPrice: result.takeProfitPrice,
-        stopLossPrice: result.stopLossPrice,
-        lossRiskPercent: result.lossRiskPercent,
-        expectedValuePercent: result.expectedValuePercent,
-        winRate,
-        confidence: result.confidence,
-      } satisfies Tepou30Item;
-    })
-    .filter((item): item is Tepou30Item => Boolean(item));
-
-  return rankTepou30Items(items, sortMode).slice(0, 30);
+  return [];
 }
 
 async function fetchRecentDates() {
-  try {
-    const url = new URL(`${JQUANTS_BASE}/equities/bars/daily`);
-    url.searchParams.set("code", "7203");
-    const json = await fetchJquantsJson(url);
+  const generated: string[] = [];
+  const cursor = new Date();
 
-    if (!json || typeof json !== "object" || !("data" in json) || !Array.isArray((json as { data?: unknown }).data)) {
-      throw new Error("J-Quants bars daily response is invalid while reading recent dates.");
+  while (generated.length < MAX_DATE_CALLS) {
+    const day = cursor.getDay();
+    if (day !== 0 && day !== 6) {
+      generated.push(`${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, "0")}-${String(cursor.getDate()).padStart(2, "0")}`);
     }
-
-    const rows = (json as { data: unknown[] }).data;
-    const dates = rows
-      .map((row) => (row && typeof row === "object" ? readString(row as JpxBarRow, ["Date", "date", "time"]) : ""))
-      .filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(date));
-
-    return [...new Set(dates)].sort((a, b) => b.localeCompare(a)).slice(0, MAX_DATE_CALLS);
-  } catch {
-    const generated: string[] = [];
-    const cursor = new Date();
-
-    while (generated.length < MAX_DATE_CALLS) {
-      const day = cursor.getDay();
-      if (day !== 0 && day !== 6) {
-        generated.push(`${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, "0")}-${String(cursor.getDate()).padStart(2, "0")}`);
-      }
-      cursor.setDate(cursor.getDate() - 1);
-    }
-
-    return generated;
+    cursor.setDate(cursor.getDate() - 1);
   }
+
+  return generated;
 }
 
 async function fetchDailyBarsByDate(date: string): Promise<JpxBarRow[]> {
-  const compactDate = date.replace(/-/g, "");
-  const url = new URL(`${JQUANTS_BASE}/equities/bars/daily`);
-  url.searchParams.set("date", compactDate);
-  const json = await fetchJquantsJson(url);
-
-  if (!json || typeof json !== "object" || !("data" in json) || !Array.isArray((json as { data?: unknown }).data)) {
-    return [];
+  const cached = await loadBarsCache(date);
+  if (cached.length > 0) {
+    return cached;
   }
 
-  return (json as { data: unknown[] }).data.filter((row): row is JpxBarRow => {
-    return Boolean(row && typeof row === "object");
-  });
+  const compactDate = date.replace(/-/g, "");
+  const rows: JpxBarRow[] = [];
+  let paginationKey = "";
+
+  for (let page = 0; page < MAX_PAGINATION_PAGES; page += 1) {
+    const url = new URL(`${JQUANTS_BASE}/equities/bars/daily`);
+    url.searchParams.set("date", compactDate);
+    if (paginationKey) {
+      url.searchParams.set("pagination_key", paginationKey);
+    }
+
+    const json = await fetchJquantsJson(url);
+
+    if (!json || typeof json !== "object" || !("data" in json) || !Array.isArray((json as { data?: unknown }).data)) {
+      break;
+    }
+
+    rows.push(
+      ...(json as { data: unknown[] }).data.filter((row): row is JpxBarRow => {
+        return Boolean(row && typeof row === "object");
+      }),
+    );
+
+    const nextKey = readString(json as Record<string, unknown>, ["pagination_key"]);
+    if (!nextKey) {
+      break;
+    }
+
+    paginationKey = nextKey;
+  }
+
+  if (rows.length > 0) {
+    await saveBarsCache(date, rows);
+  }
+
+  return rows;
 }
 
 function toCandle(row: JpxBarRow): StockCandle | null {
@@ -1253,12 +1549,14 @@ function buildStockFromCandles(
   candles: StockCandle[],
   meta: { name: string; sector: string },
   timeframe: StockTimeframe,
+  marketContext?: Stock["marketContext"],
+  analysisBacktest?: Stock["analysisBacktest"],
 ): Stock | null {
-  if (candles.length < 30) {
+  if (candles.length < MIN_CANDLES_FOR_ANALYSIS) {
     return null;
   }
 
-  const sorted = [...candles].sort((left, right) => left.time.localeCompare(right.time)).slice(-TARGET_CANDLE_DAYS);
+  const sorted = [...candles].sort((left, right) => left.time.localeCompare(right.time)).slice(-MAX_STORED_CANDLES);
   const latest = sorted[sorted.length - 1];
   const previous = sorted[sorted.length - 2] ?? latest;
   const change = latest.close - previous.close;
@@ -1284,6 +1582,8 @@ function buildStockFromCandles(
     description: "J-Quants API V2の全銘柄データをもとにAIスコアを算出しています。",
     marketData,
     chartData: { candles: sorted },
+    marketContext,
+    analysisBacktest,
     dataStatus: "real",
     dataReason: null,
     timeframe,
@@ -1310,8 +1610,27 @@ async function buildTepou30(timeframe: StockTimeframe, sortMode: Tepou30SortMode
   state.total = 0;
   state.analyzed = 0;
   stateByTimeframe.set(timeframe, state);
+  let masterMap: Map<string, { name: string; sector: string }>;
+  try {
+    masterMap = await fetchUniverseMaster();
+  } catch (error) {
+    if (error instanceof RateLimitError) {
+      state.error = "J-Quants API制限に到達したため、前回の実データランキングを表示しています。";
+      state.status = previousData.length > 0 ? "ready" : "error";
+      state.expiresAt = Date.now() + RATE_LIMIT_COOLDOWN_MS;
+      state.data = previousData;
+      state.updatedAt = previousUpdatedAt;
+      state.total = Math.max(previousData.length, state.total);
+      state.analyzed = Math.max(previousData.length, state.analyzed);
+      finalizeReadyProgress(state);
+      return;
+    }
 
-  const masterMap = await fetchUniverseMaster();
+    throw error;
+  }
+  if (masterMap.size === 0) {
+    throw new Error("J-Quants銘柄マスタを取得できませんでした。後でもう一度お試しください。");
+  }
   const universeCodes = [...masterMap.keys()].sort((left, right) => Number(left) - Number(right)).slice(0, TARGET_UNIVERSE_SIZE);
   const universeSet = new Set(universeCodes);
   const recentDates = await fetchRecentDates();
@@ -1327,12 +1646,19 @@ async function buildTepou30(timeframe: StockTimeframe, sortMode: Tepou30SortMode
       dailyRows = await fetchDailyBarsByDate(date);
     } catch (error) {
       if (error instanceof RateLimitError) {
-        state.error = "J-Quants API制限に到達したため、取得済みデータでランキングを生成しました。";
-        state.expiresAt = Date.now() + RATE_LIMIT_COOLDOWN_MS;
-        break;
+        const cachedRows = candleMap.size === 0 ? await loadAnyBarsCache() : [];
+        if (cachedRows.length > 0) {
+          dailyRows = cachedRows;
+          state.error = "J-Quants API制限に到達したため、キャッシュ済みの実データでランキングを生成しています。";
+          state.expiresAt = Date.now() + RATE_LIMIT_COOLDOWN_MS;
+        } else {
+          state.error = "J-Quants API制限に到達したため、取得済みデータでランキングを生成しました。";
+          state.expiresAt = Date.now() + RATE_LIMIT_COOLDOWN_MS;
+          break;
+        }
+      } else {
+        throw error;
       }
-
-      throw error;
     }
 
     for (const row of dailyRows) {
@@ -1357,7 +1683,7 @@ async function buildTepou30(timeframe: StockTimeframe, sortMode: Tepou30SortMode
       }
     }
 
-    state.analyzed = [...candleMap.values()].filter((candles) => candles.length >= 30).length;
+    state.analyzed = [...candleMap.values()].filter((candles) => candles.length >= MIN_CANDLES_FOR_ANALYSIS).length;
   }
 
   const candidates: UniverseCandidate[] = [];
@@ -1372,7 +1698,7 @@ async function buildTepou30(timeframe: StockTimeframe, sortMode: Tepou30SortMode
       .sort((left, right) => left.time.localeCompare(right.time))
       .slice(-MAX_STORED_CANDLES);
 
-    if (candles.length < TARGET_CANDLE_DAYS) {
+    if (candles.length < MIN_CANDLES_FOR_ANALYSIS) {
       continue;
     }
 
@@ -1385,39 +1711,53 @@ async function buildTepou30(timeframe: StockTimeframe, sortMode: Tepou30SortMode
 
   state.analyzed = candidates.length;
 
-  const optimizationCandidates = preselectCandidates(candidates, OPTIMIZATION_CANDIDATE_LIMIT);
+  const optimizationCandidates = preselectCandidates(
+    candidates.filter((candidate) => candidate.candles.length >= TARGET_CANDLE_DAYS),
+    OPTIMIZATION_CANDIDATE_LIMIT,
+  );
   const finalScoringCandidates = preselectCandidates(candidates, FINAL_SCORING_CANDIDATE_LIMIT);
 
   const learningStore = await loadLearningStore();
   const selectedHorizon: WeightHorizon = timeframe === "5m" ? "5m" : timeframe === "15m" ? "15m" : "1d";
   const preferred = getPreferredHistoricalWeights(learningStore, selectedHorizon);
   const preferredLearningProfiles = getPreferredHistoricalLearningProfiles(learningStore, selectedHorizon);
-  const optimization = optimizeWeights(optimizationCandidates, timeframe, selectedHorizon, preferred, preferredLearningProfiles);
-  registerLearningResult(
-    learningStore,
-    selectedHorizon,
-    optimization.weights,
-    optimization.learningProfile,
-    optimization.backtest,
-    optimization.objective,
-  );
-  await saveLearningStore(learningStore);
+  if (optimizationCandidates.length > 0) {
+    const optimization = optimizeWeights(optimizationCandidates, timeframe, selectedHorizon, preferred, preferredLearningProfiles);
+    registerLearningResult(
+      learningStore,
+      selectedHorizon,
+      optimization.weights,
+      optimization.learningProfile,
+      optimization.backtest,
+      optimization.objective,
+    );
+    await saveLearningStore(learningStore);
+  }
 
   const selectedLearning = learningStore.byHorizon[selectedHorizon];
   state.optimizedWeights = selectedLearning.bestWeights;
   state.optimizedLearningProfile = selectedLearning.bestLearningProfile;
   state.backtest = selectedLearning.latestBacktest;
+  const marketContext = await fetchMarketContext();
 
   const scored: Tepou30Item[] = [];
+  const candidateByCode = new Map(finalScoringCandidates.map((candidate) => [candidate.code, candidate]));
 
   for (const candidate of finalScoringCandidates) {
-    const stock = buildStockFromCandles(candidate.code, candidate.candles, candidate.meta, timeframe);
+    const stock = buildStockFromCandles(
+      candidate.code,
+      candidate.candles,
+      candidate.meta,
+      timeframe,
+      marketContext ?? undefined,
+      state.backtest,
+    );
     if (!stock) {
       continue;
     }
 
     const result = analyzeStock({ query: candidate.code, stock }, { weights: state.optimizedWeights, learningProfile: state.optimizedLearningProfile });
-    const winRate = Math.round(result.probability5m * 0.2 + result.probability15m * 0.35 + result.probability1d * 0.45);
+    const winRate = result.winRate;
 
     scored.push({
       rank: 0,
@@ -1436,10 +1776,97 @@ async function buildTepou30(timeframe: StockTimeframe, sortMode: Tepou30SortMode
       expectedValuePercent: result.expectedValuePercent,
       winRate,
       confidence: result.confidence,
+      newsSentiment: stock.newsAnalysis?.sentiment,
+      newsImportanceStars: stock.newsAnalysis?.starRating,
+      newsSummary: stock.newsAnalysis?.summary,
+      newsPositiveCount: stock.newsAnalysis?.positiveCount,
+      newsNegativeCount: stock.newsAnalysis?.negativeCount,
     });
   }
 
-  const ranked = rankTepou30Items(scored, sortMode).slice(0, 30);
+  if (scored.length > 0) {
+    const previewRanked = rankTepou30Items(scored, sortMode);
+    const newsTargetCodes = previewRanked.slice(0, 120).map((item) => item.code);
+    const newsByCode = new Map<string, Awaited<ReturnType<typeof fetchJpxNewsAnalysis>>>();
+
+    await Promise.all(newsTargetCodes.map(async (code) => {
+      try {
+        const news = await fetchJpxNewsAnalysis(code);
+        newsByCode.set(code, news);
+      } catch {
+        // Keep running with technical-only score when news endpoint is unavailable.
+      }
+    }));
+
+    for (const item of scored) {
+      const news = newsByCode.get(item.code);
+      if (!news) {
+        continue;
+      }
+
+      const candidate = candidateByCode.get(item.code);
+      if (!candidate) {
+        continue;
+      }
+
+      const stock = buildStockFromCandles(
+        candidate.code,
+        candidate.candles,
+        candidate.meta,
+        timeframe,
+        marketContext ?? undefined,
+        state.backtest,
+      );
+
+      if (!stock) {
+        continue;
+      }
+
+      stock.newsAnalysis = news;
+      const rescored = analyzeStock(
+        { query: candidate.code, stock },
+        { weights: state.optimizedWeights, learningProfile: state.optimizedLearningProfile },
+      );
+
+      item.score = rescored.score;
+      item.judgment = rescored.judgment;
+      item.probability5m = rescored.probability5m;
+      item.probability15m = rescored.probability15m;
+      item.probability1d = rescored.probability1d;
+      item.entryPrice = rescored.entryPrice;
+      item.takeProfitPrice = rescored.takeProfitPrice;
+      item.stopLossPrice = rescored.stopLossPrice;
+      item.lossRiskPercent = rescored.lossRiskPercent;
+      item.expectedValuePercent = rescored.expectedValuePercent;
+      item.winRate = rescored.winRate;
+      item.confidence = rescored.confidence;
+      item.newsSentiment = news.sentiment;
+      item.newsImportanceStars = news.starRating;
+      item.newsSummary = news.summary;
+      item.newsPositiveCount = news.positiveCount;
+      item.newsNegativeCount = news.negativeCount;
+    }
+  }
+
+  const calibratedScored = recalibrateUniverseScores(scored);
+  const ranked = rankTepou30Items(calibratedScored, sortMode).slice(0, 30);
+
+  if (calibratedScored.length > 0) {
+    const scoredRanked = rankTepou30Items(calibratedScored, sortMode);
+    const scoredCandidateMap = new Map(finalScoringCandidates.map((candidate) => [candidate.code, candidate]));
+    const refreshedBacktest = runBacktest(
+      scoredRanked,
+      scoredCandidateMap,
+      timeframe,
+      state.optimizedWeights,
+      state.optimizedLearningProfile,
+      selectedHorizon,
+    );
+
+    if (refreshedBacktest.totalTrades > 0) {
+      state.backtest = refreshedBacktest;
+    }
+  }
 
   if (ranked.length === 0) {
     if (previousData.length > 0) {
@@ -1451,21 +1878,11 @@ async function buildTepou30(timeframe: StockTimeframe, sortMode: Tepou30SortMode
       state.optimizedLearningProfile = previousLearningProfile;
       state.backtest = previousBacktest ?? { ...EMPTY_BACKTEST };
       state.error = state.error ?? "J-Quants API制限により最新更新ができなかったため、前回結果を表示しています。";
+      finalizeReadyProgress(state);
       return;
     }
 
-    const mockItems = buildMockTepou30Items(timeframe, state.optimizedWeights, state.optimizedLearningProfile, sortMode);
-    if (mockItems.length > 0) {
-      state.data = mockItems;
-      state.status = "ready";
-      state.updatedAt = Date.now();
-      state.expiresAt = Date.now() + CACHE_TTL_MS;
-      state.error = "J-Quants APIが利用制限中のため、モックデータを表示しています。";
-      await saveCacheToDisk(timeframe, state);
-      return;
-    }
-
-    throw new Error("J-Quants API制限により、テッポウ30を生成できませんでした。時間をおいて再実行してください。");
+    throw new Error("J-Quants実データからランキングを生成できませんでした。時間をおいて再実行してください。");
   }
 
   state.data = ranked;
@@ -1473,22 +1890,27 @@ async function buildTepou30(timeframe: StockTimeframe, sortMode: Tepou30SortMode
   state.updatedAt = Date.now();
   state.expiresAt = Date.now() + CACHE_TTL_MS;
   state.analyzed = candidates.length;
+  finalizeReadyProgress(state);
   await saveCacheToDisk(timeframe, state);
 }
 
 function toResponse(state: Tepou30State, sortMode: Tepou30SortMode): Tepou30Response {
+  const total = state.total > 0 ? state.total : (state.status === "ready" && state.data.length > 0 ? TARGET_UNIVERSE_SIZE : state.total);
+  const analyzed = state.status === "ready" && state.data.length > 0 ? total : state.analyzed;
+  const calibratedData = recalibrateUniverseScores(state.data);
+
   return {
     success: state.status !== "error",
     status: state.status,
     sortMode,
-    data: rankTepou30Items(state.data, sortMode),
+    data: rankTepou30Items(calibratedData, sortMode),
     optimizedWeights: state.optimizedWeights,
     optimizedLearningProfile: state.optimizedLearningProfile,
     backtest: state.backtest,
     updatedAt: state.updatedAt ? new Date(state.updatedAt).toISOString() : undefined,
     progress: {
-      total: state.total,
-      analyzed: state.analyzed,
+      total,
+      analyzed,
     },
     error: state.error,
   };
@@ -1502,6 +1924,19 @@ export async function getTepou30(
   const state = stateByTimeframe.get(timeframe) ?? getInitialState();
   stateByTimeframe.set(timeframe, state);
 
+  if (state.running && state.startedAt > 0 && Date.now() - state.startedAt > BUILD_STALE_MS) {
+    state.running = undefined;
+    if (state.data.length > 0) {
+      state.status = "ready";
+      state.error = "ランキング更新がタイムアウトしたため、直近の実データを表示しています。";
+      state.expiresAt = Math.max(state.expiresAt, Date.now() + RATE_LIMIT_COOLDOWN_MS);
+      finalizeReadyProgress(state);
+    } else {
+      state.status = "error";
+      state.error = "ランキング更新がタイムアウトしました。";
+    }
+  }
+
   if (state.data.length === 0) {
     const cached = await loadCacheFromDisk(timeframe);
     if (cached) {
@@ -1509,12 +1944,17 @@ export async function getTepou30(
     }
   }
 
+  if ((state.total <= 0 || state.analyzed <= 0) && state.data.length > 0 && !state.running) {
+    const cached = await loadCacheFromDisk(timeframe);
+    if (cached && cached.data.length >= state.data.length) {
+      hydrateStateFromCache(state, cached);
+    }
+  }
+
   const isFresh = state.status === "ready" && state.expiresAt > Date.now();
 
   if ((refresh || !isFresh) && !state.running) {
-    if (state.data.length > 0) {
-      state.status = "building";
-    }
+    state.status = "building";
 
     if (!state.running) {
       state.running = buildTepou30(timeframe, sortMode)
@@ -1523,6 +1963,7 @@ export async function getTepou30(
             state.status = "ready";
             state.error = error instanceof Error ? error.message : "Failed to refresh Tepou30.";
             state.expiresAt = Math.max(state.expiresAt, Date.now() + RATE_LIMIT_COOLDOWN_MS);
+            finalizeReadyProgress(state);
             return;
           }
 

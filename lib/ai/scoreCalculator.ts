@@ -47,6 +47,22 @@ type AnalyzeStockOptions = {
   learningProfile?: Partial<AiLearningProfile>;
 };
 
+type BacktestSummary = {
+  periodDays: number;
+  totalTrades: number;
+  winRate: number;
+  averageProfit: number;
+  averageLoss: number;
+  expectedValuePercent: number;
+  averageReturn: number;
+  riskRewardRatio: number;
+  maxDrawdown: number;
+  profitFactor: number;
+  sharpeRatio: number;
+  sortinoRatio: number;
+  calmarRatio: number;
+};
+
 function normalizeWeights(weights?: Partial<AiScoreWeights>): AiScoreWeights {
   return {
     rsi: weights?.rsi ?? DEFAULT_WEIGHTS.rsi,
@@ -99,6 +115,33 @@ function calcSlopePercent(values: number[], window = 5) {
   }
 
   return ((latest - past) / past) * 100;
+}
+
+function calculateRealizedVolatilityPercent(candles: NonNullable<Stock["chartData"]>["candles"], period = 20) {
+  if (candles.length < period + 1) {
+    return 0;
+  }
+
+  const closes = candles.map((candle) => candle.close);
+  const returns: number[] = [];
+
+  for (let index = Math.max(1, closes.length - period); index < closes.length; index += 1) {
+    const previous = closes[index - 1];
+    const current = closes[index];
+    if (previous <= 0 || current <= 0) {
+      continue;
+    }
+
+    returns.push(Math.log(current / previous));
+  }
+
+  if (returns.length < 2) {
+    return 0;
+  }
+
+  const mean = returns.reduce((sum, value) => sum + value, 0) / returns.length;
+  const variance = returns.reduce((sum, value) => sum + ((value - mean) ** 2), 0) / returns.length;
+  return Math.sqrt(variance) * 100;
 }
 
 function intradayCalibration(params: {
@@ -513,6 +556,298 @@ function decideJudgment(score: number): AiJudgment {
   return "強い売り";
 }
 
+function decideSignalEnhanced(params: {
+  score: number;
+  winRate: number;
+  expectedValuePercent: number;
+  riskRewardRatio: number;
+  marketRegimeScore: number;
+  trendConsensusScore: number;
+}) {
+  const {
+    score,
+    winRate,
+    expectedValuePercent,
+    riskRewardRatio,
+    marketRegimeScore,
+    trendConsensusScore,
+  } = params;
+  if (expectedValuePercent <= 0) {
+    if (expectedValuePercent <= -0.6 && score < 44 && marketRegimeScore < 48) {
+      return "SELL";
+    }
+
+    return "HOLD";
+  }
+
+  const strictMode = marketRegimeScore < 45;
+  const minExpected = strictMode ? 0.9 : 0.25;
+  const minWinRate = strictMode ? 58 : 50;
+  const minRr = strictMode ? 1.4 : 1.12;
+  const minScore = strictMode ? 58 : 48;
+  const minTrendConsensus = strictMode ? 58 : 52;
+
+  if (
+    expectedValuePercent >= minExpected
+    && riskRewardRatio >= minRr
+    && winRate >= minWinRate
+    && score >= minScore
+    && trendConsensusScore >= minTrendConsensus
+  ) {
+    return "BUY";
+  }
+
+  const sellStrict =
+    expectedValuePercent <= -0.45
+    && winRate <= 47
+    && riskRewardRatio <= 1.0
+    && trendConsensusScore <= 46
+    && score <= 44;
+  const sellLoose =
+    expectedValuePercent <= -0.8
+    && (winRate <= 45 || riskRewardRatio <= 0.9)
+    && (trendConsensusScore <= 44 || marketRegimeScore <= 40)
+    && score <= 46;
+
+  if (sellStrict || sellLoose) {
+    return "SELL";
+  }
+
+  return "HOLD";
+}
+
+function decideJudgmentEnhanced(params: {
+  score: number;
+  signal: TradeSignal;
+  winRate: number;
+  expectedValuePercent: number;
+}) {
+  const { score, signal, winRate, expectedValuePercent } = params;
+
+  if (signal === "BUY" && score >= 80 && winRate >= 58 && expectedValuePercent >= 1) {
+    return "強い買い";
+  }
+
+  if (signal === "BUY" && score >= 65) {
+    return "買い";
+  }
+
+  if (signal === "SELL" && score <= 24 && (winRate <= 42 || expectedValuePercent <= -1)) {
+    return "強い売り";
+  }
+
+  if (signal === "SELL" && score <= 44) {
+    return "売り";
+  }
+
+  if (score >= 80) {
+    return "強い買い";
+  }
+
+  if (score >= 65) {
+    return "買い";
+  }
+
+  if (score >= 45) {
+    return "様子見";
+  }
+
+  if (score >= 25) {
+    return "売り";
+  }
+
+  return "強い売り";
+}
+
+function deriveTradeLevels(params: {
+  entryPrice: number;
+  atr: number;
+  realizedVolatilityPercent: number;
+  support: number;
+  resistance: number;
+}) {
+  const { entryPrice, atr, realizedVolatilityPercent, support, resistance } = params;
+  const atrBase = atr > 0 ? atr : entryPrice * 0.02;
+  const volatilityMultiplier = clamp(1 + realizedVolatilityPercent / 12, 1, 2.4);
+  const stopDistance = Math.max(atrBase * 0.95 * volatilityMultiplier, entryPrice * 0.011 * volatilityMultiplier);
+  const takeDistance = Math.max(atrBase * 2.85 * volatilityMultiplier, entryPrice * 0.028 * volatilityMultiplier);
+  const rawStop = entryPrice - stopDistance;
+  const supportStop = support > 0 ? support - atrBase * 0.1 : rawStop;
+  const boundedStop = Math.max(entryPrice - stopDistance * 1.15, Math.min(rawStop, supportStop));
+  const rawTarget = entryPrice + takeDistance;
+  const resistanceTarget = resistance > 0 ? resistance + atrBase * 0.25 : rawTarget;
+  const minRrTarget = entryPrice + (entryPrice - boundedStop) * 1.35;
+  const stopLossPrice = Math.max(1, boundedStop);
+  const takeProfitPrice = Math.max(rawTarget, resistanceTarget, minRrTarget);
+
+  return {
+    stopLossPrice,
+    takeProfitPrice,
+  };
+}
+
+function simulateRollingBacktest(candles: NonNullable<Stock["chartData"]>["candles"], targetPeriodDays = 756): BacktestSummary {
+  const lookback = candles.slice(-targetPeriodDays);
+  if (lookback.length < 90) {
+    return {
+      periodDays: lookback.length,
+      totalTrades: 0,
+      winRate: 0,
+      averageProfit: 0,
+      averageLoss: 0,
+      expectedValuePercent: 0,
+      averageReturn: 0,
+      riskRewardRatio: 0,
+      maxDrawdown: 0,
+      profitFactor: 0,
+      sharpeRatio: 0,
+      sortinoRatio: 0,
+      calmarRatio: 0,
+    };
+  }
+
+  const returns: number[] = [];
+  const profits: number[] = [];
+  const losses: number[] = [];
+
+  for (let index = 60; index < lookback.length - 6; index += 1) {
+    const history = lookback.slice(0, index + 1);
+    const latest = history[history.length - 1];
+    const sma5 = calculateSma(history, 5).at(-1)?.value ?? latest.close;
+    const sma25 = calculateSma(history, 25).at(-1)?.value ?? latest.close;
+    const sma75 = calculateSma(history, 75).at(-1)?.value ?? latest.close;
+    const rsi = calculateRsi(history, 14).at(-1)?.value ?? 50;
+    const macd = calculateMacd(history).at(-1)?.histogram ?? 0;
+    const atr = calculateAtr(history, 14).at(-1)?.value ?? 0;
+    const sr = calculateSupportResistance(history, 20);
+    const realizedVolatilityPercent = calculateRealizedVolatilityPercent(history, 20);
+
+    const setupScore =
+      (latest.close > sma5 ? 16 : -10)
+      + (sma5 > sma25 ? 14 : -8)
+      + (sma25 > sma75 ? 10 : -8)
+      + (rsi >= 45 && rsi <= 68 ? 8 : rsi > 78 ? -10 : rsi < 35 ? -9 : 0)
+      + (macd > 0 ? 10 : -9);
+
+    if (setupScore < 20) {
+      continue;
+    }
+
+    const entryPrice = latest.close;
+    const levels = deriveTradeLevels({
+      entryPrice,
+      atr,
+      realizedVolatilityPercent,
+      support: sr.support,
+      resistance: sr.resistance,
+    });
+
+    const horizon = lookback.slice(index + 1, Math.min(index + 6, lookback.length));
+    if (horizon.length === 0) {
+      continue;
+    }
+
+    let exitPrice = horizon[horizon.length - 1].close;
+    let closed = false;
+
+    for (const candle of horizon) {
+      if (candle.low <= levels.stopLossPrice) {
+        exitPrice = levels.stopLossPrice;
+        closed = true;
+        break;
+      }
+
+      if (candle.high >= levels.takeProfitPrice) {
+        exitPrice = levels.takeProfitPrice;
+        closed = true;
+        break;
+      }
+    }
+
+    if (!closed) {
+      exitPrice = horizon[horizon.length - 1].close;
+    }
+
+    const ret = ((exitPrice - entryPrice) / Math.max(entryPrice, 1)) * 100;
+    returns.push(ret);
+    if (ret >= 0) {
+      profits.push(ret);
+    } else {
+      losses.push(Math.abs(ret));
+    }
+  }
+
+  if (returns.length === 0) {
+    return {
+      periodDays: lookback.length,
+      totalTrades: 0,
+      winRate: 0,
+      averageProfit: 0,
+      averageLoss: 0,
+      expectedValuePercent: 0,
+      averageReturn: 0,
+      riskRewardRatio: 0,
+      maxDrawdown: 0,
+      profitFactor: 0,
+      sharpeRatio: 0,
+      sortinoRatio: 0,
+      calmarRatio: 0,
+    };
+  }
+
+  const totalTrades = returns.length;
+  const winRate = (profits.length / totalTrades) * 100;
+  const averageProfit = profits.length > 0 ? profits.reduce((sum, value) => sum + value, 0) / profits.length : 0;
+  const averageLoss = losses.length > 0 ? losses.reduce((sum, value) => sum + value, 0) / losses.length : 0;
+  const averageReturn = returns.reduce((sum, value) => sum + value, 0) / totalTrades;
+  const expectedValuePercent = (winRate / 100) * averageProfit - (1 - winRate / 100) * averageLoss;
+  const riskRewardRatio = averageLoss > 0 ? averageProfit / averageLoss : averageProfit > 0 ? 3 : 0;
+  const equityCurve: number[] = [];
+  let equity = 1;
+  let peak = 1;
+  let maxDrawdown = 0;
+  for (const ret of returns) {
+    equity *= 1 + ret / 100;
+    equityCurve.push(equity);
+    peak = Math.max(peak, equity);
+    const drawdown = (peak - equity) / Math.max(peak, 1e-9);
+    maxDrawdown = Math.max(maxDrawdown, drawdown);
+  }
+
+  const positiveSum = profits.reduce((sum, value) => sum + value, 0);
+  const negativeSum = losses.reduce((sum, value) => sum + value, 0);
+  const profitFactor = negativeSum > 0 ? positiveSum / negativeSum : positiveSum > 0 ? 9.99 : 0;
+  const mean = averageReturn;
+  const variance = returns.reduce((sum, value) => sum + ((value - mean) ** 2), 0) / Math.max(1, totalTrades - 1);
+  const deviation = Math.sqrt(variance);
+  const downside = returns.filter((value) => value < 0);
+  const downsideVariance = downside.reduce((sum, value) => sum + (value ** 2), 0) / Math.max(1, downside.length);
+  const downsideDeviation = Math.sqrt(downsideVariance);
+  const effectiveDays = Math.max(lookback.length, 1);
+  const annualFactor = Math.sqrt(252 / Math.max(1, Math.min(5, effectiveDays / Math.max(1, totalTrades))));
+  const sharpeRatio = deviation > 0 ? (mean / deviation) * annualFactor : 0;
+  const sortinoRatio = downsideDeviation > 0 ? (mean / downsideDeviation) * annualFactor : 0;
+  const years = effectiveDays / 252;
+  const cagr = years > 0 && equity > 0 ? (Math.pow(equity, 1 / years) - 1) * 100 : 0;
+  const calmarRatio = maxDrawdown > 0 ? cagr / (maxDrawdown * 100) : cagr > 0 ? 9.99 : 0;
+
+  return {
+    periodDays: lookback.length,
+    totalTrades,
+    winRate,
+    averageProfit,
+    averageLoss,
+    expectedValuePercent,
+    averageReturn,
+    riskRewardRatio,
+    maxDrawdown: maxDrawdown * 100,
+    profitFactor,
+    sharpeRatio,
+    sortinoRatio,
+    calmarRatio,
+  };
+}
+
 function buildFallbackStock(query: string): Stock {
   return {
     code: query,
@@ -823,6 +1158,11 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
       }
     }
 
+    const recent20High = candles.slice(-20).reduce((max, candle) => Math.max(max, candle.high), Number.NEGATIVE_INFINITY);
+    const recent20Low = candles.slice(-20).reduce((min, candle) => Math.min(min, candle.low), Number.POSITIVE_INFINITY);
+    const highBreakout = Number.isFinite(recent20High) && latestClose >= recent20High;
+    const lowBreakdown = Number.isFinite(recent20Low) && latestClose <= recent20Low;
+
     if (breakout) {
       score += 8;
       bullishVotes += 1;
@@ -835,6 +1175,18 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
       score += 4;
       bullishVotes += 1;
       reasons.push("サポートライン近辺で推移しており、下値は限定的です。");
+    }
+
+    if (highBreakout) {
+      score += 6;
+      bullishVotes += 1;
+      reasons.push("直近20本の高値を更新しており、トレンド加速を示しています。");
+    }
+
+    if (lowBreakdown) {
+      score -= 8;
+      bearishVotes += 1;
+      reasons.push("直近20本の安値を更新しており、下落継続に警戒が必要です。");
     }
 
     if (volumeAverage > 0 && volumeSpike) {
@@ -875,8 +1227,16 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
       }
     }
   } else {
-    score = clamp(40 + (latest && previous && latest.close > previous.close ? 10 : -6), 0, 100);
-    reasons.push("ローソク足が十分にないため、短期的な指標に基づき評価しています。");
+    const dayReturn = latest && latest.open > 0 ? ((latest.close - latest.open) / latest.open) * 100 : (stock.marketData?.changePercent ?? 0);
+    const dayRange = latest && latest.close > 0 ? ((latest.high - latest.low) / latest.close) * 100 : 0;
+    const sparseNewsBias = newsSentimentScore * (newsSentimentConfidence / 100) * 0.45;
+    score = clamp(50 + dayReturn * 6.2 - dayRange * 1.25 + sparseNewsBias, 12, 88);
+    if (dayReturn >= 0) {
+      bullishVotes += 1;
+    } else {
+      bearishVotes += 1;
+    }
+    reasons.push("ローソク足が十分でないため、当日値動き・日中ボラティリティ・ニュースを中心に暫定評価しています。");
   }
 
   const baseScore = clamp(score, 0, 100);
@@ -885,16 +1245,19 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
   const provisionalTrendStrength = baseScore >= 80 ? "非常に強い" : baseScore >= 65 ? "強い" : baseScore >= 48 ? "標準" : "弱い";
   const entryPrice = Number(latestPrice.toFixed(2));
   const atrForTrade = latestAtr > 0 ? latestAtr : entryPrice * 0.02;
-  const stopDistance = Math.max(atrForTrade * 1.25, entryPrice * 0.023);
-  const takeDistance = Math.max(atrForTrade * (baseScore >= 70 ? 2.25 : 1.7), entryPrice * 0.034);
-  const supportBasedStop = support > 0 ? Math.min(entryPrice - stopDistance, support - atrForTrade * 0.25) : entryPrice - stopDistance;
-  const resistanceBasedTarget = resistance > 0 ? Math.max(entryPrice + takeDistance, resistance + atrForTrade * 0.35) : entryPrice + takeDistance;
-  const stopLossPrice = Number(Math.max(1, supportBasedStop).toFixed(2));
-  const takeProfitPrice = Number(Math.max(resistanceBasedTarget, entryPrice + takeDistance).toFixed(2));
+  const realizedVolatilityPercent = calculateRealizedVolatilityPercent(candles, 20);
+  const tradeLevels = deriveTradeLevels({
+    entryPrice,
+    atr: atrForTrade,
+    realizedVolatilityPercent,
+    support,
+    resistance,
+  });
+  const stopLossPrice = Number(tradeLevels.stopLossPrice.toFixed(2));
+  const takeProfitPrice = Number(tradeLevels.takeProfitPrice.toFixed(2));
   const riskRewardRatio = Number(((takeProfitPrice - entryPrice) / Math.max(entryPrice - stopLossPrice, 1)).toFixed(2));
   const lossRiskPercent = Number((((entryPrice - stopLossPrice) / Math.max(entryPrice, 1)) * 100).toFixed(2));
   const rewardPercent = ((takeProfitPrice - entryPrice) / Math.max(entryPrice, 1)) * 100;
-  const estimatedWinRate = clamp(24 + baseScore * 0.52, 20, 86);
   const ma5Score = clamp(50 + ((latestClose - latestSma5) / Math.max(latestSma5, 1)) * 2000, 0, 100);
   const ma25Score = clamp(50 + ((latestSma5 - latestSma25) / Math.max(latestSma25, 1)) * 2000, 0, 100);
   const ma75Score = clamp(50 + ((latestSma25 - latestSma75) / Math.max(latestSma75, 1)) * 1800, 0, 100);
@@ -909,6 +1272,63 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
   const volumeSpikeScore = clamp(35 + volumeSurgeRate * 24, 0, 100);
   const trendStrengthScore = clamp(baseScore, 0, 100);
   const lossRiskScore = clamp(100 - lossRiskPercent * 11, 0, 100);
+  const maCompositeScore = clamp((ma5Score * 0.35) + (ma25Score * 0.35) + (ma75Score * 0.3), 0, 100);
+  const volumeCompositeScore = clamp((volumeRatioScore * 0.55) + (volumeSpikeScore * 0.45), 0, 100);
+  const atrComponentScore = clamp(95 - ((atrForTrade / Math.max(entryPrice, 1)) * 100 * 10), 0, 100);
+  const volatilityScore = clamp(100 - realizedVolatilityPercent * 18, 0, 100);
+  const lookback52 = candles.slice(-252);
+  const high52 = lookback52.length > 0 ? Math.max(...lookback52.map((candle) => candle.high)) : latestClose;
+  const low52 = lookback52.length > 0 ? Math.min(...lookback52.map((candle) => candle.low)) : latestClose;
+  const positionIn52w = high52 > low52 ? (latestClose - low52) / (high52 - low52) : 0.5;
+  const week52Score = clamp(100 - Math.abs(positionIn52w - 0.62) * 160, 0, 100);
+  const nikkeiChangePercent = stock.marketContext?.nikkeiChangePercent ?? null;
+  const topixChangePercent = stock.marketContext?.topixChangePercent ?? null;
+  const usdJpyChangePercent = stock.marketContext?.usdJpyChangePercent ?? null;
+  const vixChangePercent = stock.marketContext?.vixChangePercent ?? null;
+  const nikkeiScore = nikkeiChangePercent === null ? 50 : clamp(50 + nikkeiChangePercent * 10, 0, 100);
+  const topixScore = topixChangePercent === null ? 50 : clamp(50 + topixChangePercent * 9, 0, 100);
+  const usdJpyScore = usdJpyChangePercent === null ? 50 : clamp(50 + usdJpyChangePercent * 8, 0, 100);
+  const vixScore = vixChangePercent === null ? 50 : clamp(55 - vixChangePercent * 8, 0, 100);
+  const marketRegimeScore = clamp((nikkeiScore * 0.33) + (topixScore * 0.34) + (usdJpyScore * 0.2) + (vixScore * 0.13), 0, 100);
+  const newsComponentScore = clamp(50 + (newsSentimentScore * (newsSentimentConfidence / 100) * 0.8), 0, 100);
+  const oneYearBacktest = simulateRollingBacktest(candles, 756);
+  const externalBacktest = stock.analysisBacktest;
+  const backtestWinRateRaw = oneYearBacktest.totalTrades >= 12
+    ? oneYearBacktest.winRate
+    : (externalBacktest?.winRate ?? 50);
+  const backtestExpectedRaw = oneYearBacktest.totalTrades >= 12
+    ? oneYearBacktest.expectedValuePercent
+    : (externalBacktest?.expectedValuePercent ?? 0);
+  const backtestDrawdownRaw = oneYearBacktest.totalTrades >= 12
+    ? oneYearBacktest.maxDrawdown
+    : (externalBacktest?.maxDrawdown ?? clamp(oneYearBacktest.averageLoss * 5, 0, 30));
+  const backtestProfitFactorRaw = oneYearBacktest.totalTrades >= 12
+    ? oneYearBacktest.profitFactor
+    : (externalBacktest?.profitFactor ?? 1);
+  const backtestSharpeRaw = oneYearBacktest.totalTrades >= 12
+    ? oneYearBacktest.sharpeRatio
+    : (externalBacktest?.sharpeRatio ?? 0);
+  const backtestSortinoRaw = oneYearBacktest.totalTrades >= 12
+    ? oneYearBacktest.sortinoRatio
+    : (externalBacktest?.sortinoRatio ?? 0);
+  const backtestCalmarRaw = oneYearBacktest.totalTrades >= 12
+    ? oneYearBacktest.calmarRatio
+    : (externalBacktest?.calmarRatio ?? 0);
+  const backtestRrRaw = oneYearBacktest.totalTrades >= 12
+    ? oneYearBacktest.riskRewardRatio
+    : riskRewardRatio;
+  const backtestScore = clamp(
+    backtestWinRateRaw * 0.34
+      + (backtestExpectedRaw + 3) * 8.5
+      + backtestProfitFactorRaw * 9.5
+      + backtestRrRaw * 5.5
+      + backtestSharpeRaw * 4.4
+      + backtestSortinoRaw * 4.9
+      + backtestCalmarRaw * 4.4
+      - backtestDrawdownRaw * 1.75,
+    0,
+    100,
+  );
   const riskPenalty =
     lossRiskPercent >= 6 ? 10
       : lossRiskPercent >= 5 ? 7
@@ -917,7 +1337,7 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
       : 0;
   const rewardBonus = rewardPercent >= 8 ? 5 : rewardPercent >= 6 ? 3 : rewardPercent >= 4 ? 1 : 0;
   const rrBonus = riskRewardRatio >= 2.4 ? 6 : riskRewardRatio >= 2 ? 4 : riskRewardRatio >= 1.6 ? 2 : 0;
-  const expectancyPercent = (rewardPercent * (estimatedWinRate / 100)) - (lossRiskPercent * (1 - estimatedWinRate / 100));
+  const expectancyPercent = (rewardPercent * (backtestWinRateRaw / 100)) - (lossRiskPercent * (1 - backtestWinRateRaw / 100));
   const expectancyBonus = expectancyPercent >= 2.2 ? 7 : expectancyPercent >= 1.5 ? 5 : expectancyPercent >= 0.8 ? 3 : expectancyPercent >= 0 ? 1 : -3;
   const consistencyBonus = momentumConsistency >= 0.4 ? 3 : momentumConsistency <= -0.4 ? -4 : 0;
   const horizonBonus = trendAlignment >= 2 ? 4 : trendAlignment <= -2 ? -5 : 0;
@@ -981,6 +1401,27 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
   if (stock.newsAnalysis) {
     reasons.push(newsImpact.reason);
   }
+
+  reasons.push(`52週レンジは高値${high52.toFixed(2)}円・安値${low52.toFixed(2)}円で、現在位置は${(positionIn52w * 100).toFixed(1)}%です。`);
+  if (nikkeiChangePercent !== null) {
+    reasons.push(`日経平均の前日比は${nikkeiChangePercent.toFixed(2)}%で、市場地合いをスコアに反映しています。`);
+  }
+  if (topixChangePercent !== null) {
+    reasons.push(`TOPIXの前日比は${topixChangePercent.toFixed(2)}%で、市場全体の広がりをスコアに反映しています。`);
+  }
+  if (usdJpyChangePercent !== null) {
+    reasons.push(`ドル円の前日比は${usdJpyChangePercent.toFixed(2)}%で、為替感応度をスコアに反映しています。`);
+  }
+  if (vixChangePercent !== null) {
+    reasons.push(`VIXの前日比は${vixChangePercent.toFixed(2)}%で、リスクオフ圧力をスコアに反映しています。`);
+  }
+  if (stock.analysisBacktest) {
+    reasons.push(`バックテスト（${stock.analysisBacktest.periodDays}日）の勝率${stock.analysisBacktest.winRate.toFixed(2)}%・期待値${stock.analysisBacktest.expectedValuePercent.toFixed(2)}%・PF${stock.analysisBacktest.profitFactor.toFixed(2)}・最大DD${stock.analysisBacktest.maxDrawdown.toFixed(2)}%を採点に反映しています。`);
+  }
+  if (oneYearBacktest.totalTrades > 0) {
+    reasons.push(`過去${oneYearBacktest.periodDays}日（最大3年）の実データ検証では${oneYearBacktest.totalTrades}トレード、勝率${oneYearBacktest.winRate.toFixed(2)}%、期待値${oneYearBacktest.expectedValuePercent.toFixed(2)}%、PF${oneYearBacktest.profitFactor.toFixed(2)}でした。`);
+  }
+
   const technicalBlend = clamp(0.6 * learningProfile.technicalWeight, 0.4, 0.78);
   const baseBlend = clamp(0.34 * learningProfile.technicalWeight, 0.2, 0.45);
   const adjustedScore = clamp(
@@ -999,9 +1440,55 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
     0,
     100,
   );
+
+  const productionAiScore = clamp(
+    (
+      backtestWinRateRaw * 0.42
+      + maCompositeScore * 0.1
+      + macdScore * 0.06
+      + rsiScore * 0.06
+      + volumeCompositeScore * 0.06
+      + atrComponentScore * 0.05
+      + volatilityScore * 0.05
+      + bollingerScore * 0.05
+      + week52Score * 0.04
+      + nikkeiScore * 0.03
+      + topixScore * 0.03
+      + usdJpyScore * 0.03
+      + vixScore * 0.03
+      + newsComponentScore * 0.06
+      + supportResistanceScore * 0.06
+    )
+      + newsAdjustment * 0.35
+      + rewardBonus
+      + rrBonus
+      + regimeAdjustment
+      + (marketRegimeScore - 50) * 0.18
+      - riskPenalty
+      - downsidePenalty,
+    0,
+    100,
+  );
+
+  const backtestReliability = clamp(oneYearBacktest.totalTrades / 80, 0, 1);
+  const backtestBlend = 0.5 + backtestReliability * 0.35;
+  const productionBlend = 0.3 - backtestReliability * 0.12;
+  const adjustedBlend = 1 - backtestBlend - productionBlend;
+  const blendedRawScore = (
+    productionAiScore * productionBlend
+    + adjustedScore * adjustedBlend
+    + backtestScore * backtestBlend
+  );
+  // Shrink extreme tails so score behavior is more consistent across the full universe.
+  const stabilizedScore = 50 + (blendedRawScore - 50) * 1.02 + (marketRegimeScore - 50) * 0.14;
+  const bearishFloor = voteBias <= -5 || (lossRiskPercent >= 6 && backtestExpectedRaw <= 0) ? 28 : 34;
+  const expectancyFloorBoost = backtestExpectedRaw > 0 && backtestRrRaw >= 1.4 && marketRegimeScore >= 42
+    ? clamp(backtestExpectedRaw * 2 + Math.max(0, backtestWinRateRaw - 50) * 0.08, 0, 6)
+    : 0;
+  const finalScore = clamp(stabilizedScore, bearishFloor + expectancyFloorBoost, 92);
   const confidence = clamp(
     32
-      + Math.round(adjustedScore * 0.36)
+      + Math.round(finalScore * 0.36)
       + consensus * 4
       + (candles.length >= 60 ? 6 : 0)
       - (lossRiskPercent >= 5 ? 8 : 0)
@@ -1009,15 +1496,38 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
     22,
     95,
   ) + tradeFactor.confidenceBonus;
-  const riskLevel = adjustedScore >= 72 && lossRiskPercent < 4 ? "低" : adjustedScore >= 48 && lossRiskPercent < 5 ? "中" : "高";
-  const trendStrength = adjustedScore >= 80 ? "非常に強い" : adjustedScore >= 65 ? "強い" : adjustedScore >= 48 ? "標準" : "弱い";
+  const riskLevel = finalScore >= 72 && lossRiskPercent < 4 ? "低" : finalScore >= 48 && lossRiskPercent < 5 ? "中" : "高";
+  const trendStrength = finalScore >= 80 ? "非常に強い" : finalScore >= 65 ? "強い" : finalScore >= 48 ? "標準" : "弱い";
   const momentumBias = latest && previous && latest.close > previous.close ? 4 : -3;
   const intradayTrendBias = clamp(trendStack.dailyTrend * 0.5 + trendStack.weeklyTrend * 0.25 + trendStack.monthlyTrend * 0.12, -8, 8);
   const intradayNewsBias = clamp(newsSentimentScore * (newsSentimentConfidence / 100) * 0.04, -4, 4);
+  const baseBacktestWinRate = clamp(backtestWinRateRaw, 15, 95);
+  const impliedWinRateFromEdge = clamp(
+    ((backtestExpectedRaw + lossRiskPercent) / Math.max(rewardPercent + lossRiskPercent, 0.0001)) * 100,
+    10,
+    96,
+  );
+  const winRateEdge = clamp(
+    (finalScore - 50) * 0.18
+      + trendAlignment * 1.1
+      + momentumConsistency * 6
+      + rrBonus * 0.7
+      - lossRiskPercent * 0.75,
+    -12,
+    12,
+  );
+  const winRate = clamp(
+    Math.round(baseBacktestWinRate * 0.68 + impliedWinRateFromEdge * 0.32 + winRateEdge),
+    10,
+    96,
+  );
+  const empiricalRiskReward = oneYearBacktest.totalTrades >= 10 ? oneYearBacktest.riskRewardRatio : riskRewardRatio;
+  const effectiveRiskRewardRatio = Number(
+    clamp(Math.max(riskRewardRatio, empiricalRiskReward * 0.85), 0.2, 6).toFixed(2),
+  );
   let probability5m = clamp(
     Math.round(
-      24
-        + adjustedScore * 0.4
+      winRate * 0.84
         + momentumBias
         + intradayTrendBias * 0.5
         + intradayNewsBias * 0.5
@@ -1034,8 +1544,7 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
   );
   let probability15m = clamp(
     Math.round(
-      26
-        + adjustedScore * 0.44
+      winRate * 0.9
         + intradayTrendBias * 0.7
         + intradayNewsBias * 0.8
         + Math.round(momentumPersistence * 1.2)
@@ -1043,7 +1552,7 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
         + Math.round(trendAlignment * 1.7)
         + Math.round(maSlopeBlend * 3.1)
         + (trendStrength === "非常に強い" || trendStrength === "強い" ? 6 : 0)
-        + (riskRewardRatio >= 2 ? 3 : 0)
+        + (effectiveRiskRewardRatio >= 2 ? 3 : 0)
         - (lossRiskPercent >= 5 ? 5 : 0),
     ),
     16,
@@ -1075,13 +1584,12 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
   probability15m = clamp(Math.round(probability15m * 0.88 + probabilityBalance * 0.12 + tradeFactor.winRateBonus * 0.45 + trendStack.alignment * 0.6), 16, 90);
   const probability1d = clamp(
     Math.round(
-      28
-        + adjustedScore * 0.48
+      winRate
         + Math.round(momentumPersistence * 1.6)
         + Math.round(momentumConsistency * 5)
         + Math.round(trendAlignment * 2.2)
         + Math.round(maSlopeBlend * 3.8)
-        + (riskRewardRatio >= 2 ? 5 : 0)
+        + (effectiveRiskRewardRatio >= 2 ? 5 : 0)
         + (newsSentimentScore > 10 ? 4 : newsSentimentScore < -10 ? -5 : 0)
         - (lossRiskPercent >= 5 ? 6 : 0),
     ),
@@ -1089,28 +1597,73 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
     92,
   );
   const expectedValuePercent = Number((
-    ((probability1d / 100) * rewardPercent) - ((1 - probability1d / 100) * lossRiskPercent)
+    ((winRate / 100) * rewardPercent) - ((1 - winRate / 100) * lossRiskPercent)
   ).toFixed(2));
+  const breakevenWinRate = riskRewardRatio > 0 ? (100 / (1 + riskRewardRatio)) : 100;
+  const edgeToBreakeven = winRate - breakevenWinRate;
+  const trendConsensusScore = clamp(
+    50
+      + trendAlignment * 8
+      + maSlopeBlend * 6
+      + trendAssessment.totalScore * 1.4
+      + momentumConsistency * 16
+      + (trendStack.dailyTrend > 0 ? 3 : -3),
+    0,
+    100,
+  );
+  const consistencyBoost = clamp(edgeToBreakeven * 0.18 + expectedValuePercent * 1.4, -4, 6);
+  let calibratedFinalScore = finalScore;
+  calibratedFinalScore = clamp(calibratedFinalScore + consistencyBoost, 0, 100);
+  if (expectedValuePercent > 0 && effectiveRiskRewardRatio >= 1.5 && calibratedFinalScore < 45) {
+    const uplift = clamp(expectedValuePercent * 1.2 + Math.max(0, winRate - 50) * 0.06, 0, 8);
+    calibratedFinalScore = clamp(calibratedFinalScore + uplift, 0, 100);
+  }
+  const distributionTargetScore = clamp(
+    50
+      + (winRate - 50) * 0.92
+      + expectedValuePercent * 7.4
+      + (effectiveRiskRewardRatio - 1) * 11.5
+      + (trendConsensusScore - 50) * 0.34
+      + (marketRegimeScore - 50) * 0.18,
+    0,
+    100,
+  );
+  calibratedFinalScore = clamp(calibratedFinalScore * 0.58 + distributionTargetScore * 0.42, 0, 100);
     const rankedReasons = rankReasons(reasons);
 
   const summary = [
-    `指標ベースのAI評価では、${adjustedScore}点です。`,
+    `13項目評価（移動平均・MACD・RSI・出来高・ATR・ボラ・52週レンジ・日経・TOPIX・ドル円・ニュース・バックテスト等）によるAI評価は${Math.round(calibratedFinalScore)}点です。`,
     trendStack.dailyTrend || trendStack.weeklyTrend || trendStack.monthlyTrend
       ? `日足/週足/月足は${trendStack.dailyTrend.toFixed(2)}% / ${trendStack.weeklyTrend.toFixed(2)}% / ${trendStack.monthlyTrend.toFixed(2)}%で、総合トレンドは${trendAssessment.direction}です。`
       : "",
       rankedReasons.slice(0, 4).map((reason) => reason.label).join(" "),
     `損失リスクは${lossRiskPercent}%、1日期待値は${expectedValuePercent}%、リスク水準は${riskLevel}、トレンド強度は${trendStrength}です。`,
   ].join(" ");
-    const aiReason = rankedReasons.slice(0, 5).map((reason) => `• ${reason.label}`);
-  const reasonInsights = buildReasonInsights(reasons, Math.round(adjustedScore), decideSignal(Math.round(adjustedScore)));
+    const aiReason = rankedReasons.slice(0, 6).map((reason) => `• ${reason.label}`);
+  const roundedScore = Math.round(calibratedFinalScore);
+  const signal = decideSignalEnhanced({
+    score: roundedScore,
+    winRate,
+    expectedValuePercent,
+    riskRewardRatio: effectiveRiskRewardRatio,
+    marketRegimeScore,
+    trendConsensusScore,
+  });
+  const judgment = decideJudgmentEnhanced({
+    score: roundedScore,
+    signal,
+    winRate,
+    expectedValuePercent,
+  });
+  const reasonInsights = buildReasonInsights(reasons, roundedScore, signal);
 
   return {
     code: stock.code,
     name: stock.name,
     sector: stock.sector,
-    score: Math.round(adjustedScore),
-    judgment: decideJudgment(Math.round(adjustedScore)),
-    signal: decideSignal(Math.round(adjustedScore)),
+    score: roundedScore,
+    judgment,
+    signal,
     trend: trendLabels[stock.baselineTrend],
     confidence: Math.round(confidence),
     summary,
@@ -1120,11 +1673,13 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
     entryPrice,
     takeProfitPrice,
     stopLossPrice,
-    riskRewardRatio,
+    riskRewardRatio: effectiveRiskRewardRatio,
     lossRiskPercent,
     probability5m,
     probability15m,
     probability1d,
+    winRate,
+    backtestWinRate: Number(baseBacktestWinRate.toFixed(2)),
     expectedValuePercent,
     aiReason,
     positiveFactors: reasonInsights.positiveFactors,

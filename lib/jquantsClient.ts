@@ -8,6 +8,46 @@ const authCache: AuthCache = {
   expiresAt: 0,
 };
 
+const DEFAULT_TIMEOUT_MS = 15_000;
+
+function resolveTimeoutMs() {
+  const configured = Number(process.env.JPX_REQUEST_TIMEOUT_MS);
+  if (Number.isFinite(configured) && configured >= 1_000) {
+    return configured;
+  }
+
+  return DEFAULT_TIMEOUT_MS;
+}
+
+function createTimeoutSignal(timeoutMs: number, signal?: AbortSignal | null) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => {
+    controller.abort(new Error(`J-Quants request timed out after ${timeoutMs}ms.`));
+  }, timeoutMs);
+
+  const onAbort = () => {
+    controller.abort(signal?.reason);
+  };
+
+  if (signal) {
+    if (signal.aborted) {
+      onAbort();
+    } else {
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
+  }
+
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      clearTimeout(timer);
+      if (signal) {
+        signal.removeEventListener("abort", onAbort);
+      }
+    },
+  };
+}
+
 export class JQuantsHttpError extends Error {
   status: number;
   body: string;
@@ -50,10 +90,12 @@ function readString(record: Record<string, unknown>, keys: string[]) {
 }
 
 async function fetchJson(url: URL, init?: RequestInit) {
+  const { signal, cleanup } = createTimeoutSignal(resolveTimeoutMs(), init?.signal);
   const response = await fetch(url, {
     ...init,
     cache: "no-store",
-  });
+    signal,
+  }).finally(cleanup);
 
   const text = await response.text();
   if (!response.ok) {
@@ -192,14 +234,16 @@ export async function getJQuantsAuthHeaders(): Promise<Record<string, string>> {
 
 export async function fetchJQuantsJson(url: URL, init?: RequestInit): Promise<unknown> {
   const authHeaders = await getJQuantsAuthHeaders();
+  const { signal, cleanup } = createTimeoutSignal(resolveTimeoutMs(), init?.signal);
   const response = await fetch(url, {
     ...init,
     cache: "no-store",
+    signal,
     headers: {
       ...(init?.headers ?? {}),
       ...authHeaders,
     },
-  });
+  }).finally(cleanup);
 
   const body = await response.text();
   if (!response.ok) {

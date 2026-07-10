@@ -92,7 +92,7 @@ export async function fetchTepou30(
 ): Promise<Tepou30Response> {
   const key = `${timeframe}:${sortMode}`;
   const cached = tepou30ApiCache.get(key);
-  if (!refresh && cached && cached.expiresAt > Date.now()) {
+  if (!refresh && cached && cached.expiresAt > Date.now() && cached.value.status !== "building") {
     return cached.value;
   }
 
@@ -120,10 +120,13 @@ export async function fetchTepou30(
     }
 
     const payload = (await response.json()) as Tepou30Response;
-    tepou30ApiCache.set(key, {
-      expiresAt: Date.now() + 45_000,
-      value: payload,
-    });
+
+    if (payload.status !== "building") {
+      tepou30ApiCache.set(key, {
+        expiresAt: Date.now() + 45_000,
+        value: payload,
+      });
+    }
 
     return payload;
   })()
