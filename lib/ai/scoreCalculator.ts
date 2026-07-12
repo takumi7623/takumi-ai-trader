@@ -10,6 +10,7 @@ import {
   calculateVolumeAverage,
   calculateVolumeSurgeRate,
 } from "../indicators";
+import { calculateExpectedValue } from "./expectedValueAnalyzer";
 
 const trendLabels: Record<Stock["baselineTrend"], string> = {
   up: "上昇基調",
@@ -93,6 +94,11 @@ function normalizeLearningProfile(profile?: Partial<AiLearningProfile>): AiLearn
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
+}
+
+function mergeRiskLevels(base: "低" | "中" | "高", expectedValueRisk: "低" | "中" | "高") {
+  const rank = { "低": 0, "中": 1, "高": 2 } as const;
+  return rank[expectedValueRisk] > rank[base] ? expectedValueRisk : base;
 }
 
 function calcChangePercent(base: number, latest: number) {
@@ -1158,8 +1164,9 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
       }
     }
 
-    const recent20High = candles.slice(-20).reduce((max, candle) => Math.max(max, candle.high), Number.NEGATIVE_INFINITY);
-    const recent20Low = candles.slice(-20).reduce((min, candle) => Math.min(min, candle.low), Number.POSITIVE_INFINITY);
+    const prior20Candles = candles.length > 1 ? candles.slice(Math.max(0, candles.length - 21), -1) : candles;
+    const recent20High = prior20Candles.reduce((max, candle) => Math.max(max, candle.high), Number.NEGATIVE_INFINITY);
+    const recent20Low = prior20Candles.reduce((min, candle) => Math.min(min, candle.low), Number.POSITIVE_INFINITY);
     const highBreakout = Number.isFinite(recent20High) && latestClose >= recent20High;
     const lowBreakdown = Number.isFinite(recent20Low) && latestClose <= recent20Low;
 
@@ -1180,7 +1187,7 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
     if (highBreakout) {
       score += 6;
       bullishVotes += 1;
-      reasons.push("直近20本の高値を更新しており、トレンド加速を示しています。");
+      reasons.push("直近高値（20本）を更新しており、トレンド加速を示しています。");
     }
 
     if (lowBreakdown) {
@@ -1485,8 +1492,17 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
   const expectancyFloorBoost = backtestExpectedRaw > 0 && backtestRrRaw >= 1.4 && marketRegimeScore >= 42
     ? clamp(backtestExpectedRaw * 2 + Math.max(0, backtestWinRateRaw - 50) * 0.08, 0, 6)
     : 0;
-  const finalScore = clamp(stabilizedScore, bearishFloor + expectancyFloorBoost, 92);
-  const confidence = clamp(
+  let finalScore = clamp(stabilizedScore, bearishFloor + expectancyFloorBoost, 92);
+  const weakDowntrendSetup =
+    stock.baselineTrend === "volatile"
+    && trendAssessment.direction === "下降"
+    && latestSma25 > 0
+    && latestClose < latestSma25
+    && volumeRatio <= 0.9;
+  if (weakDowntrendSetup) {
+    finalScore = Math.min(finalScore, 55);
+  }
+  let confidence = clamp(
     32
       + Math.round(finalScore * 0.36)
       + consensus * 4
@@ -1496,7 +1512,10 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
     22,
     95,
   ) + tradeFactor.confidenceBonus;
-  const riskLevel = finalScore >= 72 && lossRiskPercent < 4 ? "低" : finalScore >= 48 && lossRiskPercent < 5 ? "中" : "高";
+  if (weakDowntrendSetup) {
+    confidence = Math.min(confidence, 69);
+  }
+  const intrinsicRiskLevel = finalScore >= 72 && lossRiskPercent < 4 ? "低" : finalScore >= 48 && lossRiskPercent < 5 ? "中" : "高";
   const trendStrength = finalScore >= 80 ? "非常に強い" : finalScore >= 65 ? "強い" : finalScore >= 48 ? "標準" : "弱い";
   const momentumBias = latest && previous && latest.close > previous.close ? 4 : -3;
   const intradayTrendBias = clamp(trendStack.dailyTrend * 0.5 + trendStack.weeklyTrend * 0.25 + trendStack.monthlyTrend * 0.12, -8, 8);
@@ -1596,11 +1615,6 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
     18,
     92,
   );
-  const expectedValuePercent = Number((
-    ((winRate / 100) * rewardPercent) - ((1 - winRate / 100) * lossRiskPercent)
-  ).toFixed(2));
-  const breakevenWinRate = riskRewardRatio > 0 ? (100 / (1 + riskRewardRatio)) : 100;
-  const edgeToBreakeven = winRate - breakevenWinRate;
   const trendConsensusScore = clamp(
     50
       + trendAlignment * 8
@@ -1611,6 +1625,30 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
     0,
     100,
   );
+  const baseExpectedValuePercent = Number((
+    ((winRate / 100) * rewardPercent) - ((1 - winRate / 100) * lossRiskPercent)
+  ).toFixed(2));
+  const expectedValueAnalysis = calculateExpectedValue({
+    aiScore: finalScore,
+    backtestWinRate: backtestWinRateRaw,
+    profitFactor: backtestProfitFactorRaw,
+    riskRewardRatio: effectiveRiskRewardRatio,
+    newsScore: newsComponentScore,
+    volumeScore: volumeCompositeScore,
+    trendScore: trendConsensusScore,
+    atr: volatilityPercent,
+    adx: latestAdx,
+    volatility: realizedVolatilityPercent,
+    baseExpectedValue: baseExpectedValuePercent,
+  });
+  // Keep Ver1.1 score behavior: expected value analyzer must not alter score inputs.
+  const expectedValuePercent = baseExpectedValuePercent;
+  const riskLevel = intrinsicRiskLevel;
+  const expectedValue = expectedValueAnalysis.expectedValue;
+  const entryPriority = expectedValueAnalysis.entryPriority;
+  const rewardLevel = expectedValueAnalysis.rewardLevel;
+  const breakevenWinRate = riskRewardRatio > 0 ? (100 / (1 + riskRewardRatio)) : 100;
+  const edgeToBreakeven = winRate - breakevenWinRate;
   const consistencyBoost = clamp(edgeToBreakeven * 0.18 + expectedValuePercent * 1.4, -4, 6);
   let calibratedFinalScore = finalScore;
   calibratedFinalScore = clamp(calibratedFinalScore + consistencyBoost, 0, 100);
@@ -1629,6 +1667,9 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
     100,
   );
   calibratedFinalScore = clamp(calibratedFinalScore * 0.58 + distributionTargetScore * 0.42, 0, 100);
+  if (weakDowntrendSetup) {
+    calibratedFinalScore = Math.min(calibratedFinalScore, 55);
+  }
     const rankedReasons = rankReasons(reasons);
 
   const summary = [
@@ -1637,9 +1678,22 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
       ? `日足/週足/月足は${trendStack.dailyTrend.toFixed(2)}% / ${trendStack.weeklyTrend.toFixed(2)}% / ${trendStack.monthlyTrend.toFixed(2)}%で、総合トレンドは${trendAssessment.direction}です。`
       : "",
       rankedReasons.slice(0, 4).map((reason) => reason.label).join(" "),
-    `損失リスクは${lossRiskPercent}%、1日期待値は${expectedValuePercent}%、リスク水準は${riskLevel}、トレンド強度は${trendStrength}です。`,
+    `損失リスクは${lossRiskPercent}%、1日期待値は${expectedValuePercent}%、リスク水準は${riskLevel}、報酬水準は${rewardLevel}、エントリー優先度は${entryPriority.toFixed(1)}です。トレンド強度は${trendStrength}です。`,
   ].join(" ");
-    const aiReason = rankedReasons.slice(0, 6).map((reason) => `• ${reason.label}`);
+    const aiReasonLabels = rankedReasons.slice(0, 6).map((reason) => reason.label);
+  const trendReason = reasons.find((reason) => reason.includes("総合トレンドは"));
+  if (trendReason && !aiReasonLabels.some((reason) => reason.includes("総合トレンドは"))) {
+    aiReasonLabels.unshift(trendReason);
+  }
+  const breakoutReason = reasons.find((reason) => reason.includes("直近高値"));
+  if (breakoutReason && !aiReasonLabels.some((reason) => reason.includes("直近高値"))) {
+    if (aiReasonLabels.length >= 6) {
+      aiReasonLabels[5] = breakoutReason;
+    } else {
+      aiReasonLabels.push(breakoutReason);
+    }
+  }
+  const aiReason = aiReasonLabels.slice(0, 6).map((reason) => `• ${reason}`);
   const roundedScore = Math.round(calibratedFinalScore);
   const signal = decideSignalEnhanced({
     score: roundedScore,
@@ -1681,6 +1735,10 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
     winRate,
     backtestWinRate: Number(baseBacktestWinRate.toFixed(2)),
     expectedValuePercent,
+    expectedValue,
+    entryPriority,
+    rewardLevel,
+    expectedValueRiskLevel: expectedValueAnalysis.riskLevel,
     aiReason,
     positiveFactors: reasonInsights.positiveFactors,
     negativeFactors: reasonInsights.negativeFactors,

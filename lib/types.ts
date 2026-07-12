@@ -144,6 +144,10 @@ export type AiScoreResult = {
   winRate: number;
   backtestWinRate: number;
   expectedValuePercent: number;
+  expectedValue: number;
+  entryPriority: number;
+  rewardLevel: "低" | "中" | "高";
+  expectedValueRiskLevel: "低" | "中" | "高";
   aiReason: string[];
   positiveFactors: string[];
   negativeFactors: string[];
