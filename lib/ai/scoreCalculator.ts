@@ -1734,6 +1734,22 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
       aiReasonLabels.push(volumeSpikeReason);
     }
   }
+  const comboReason = reasons.find((reason) => reason.includes("複数シグナル一致"));
+  if (comboReason && !aiReasonLabels.some((reason) => reason.includes("複数シグナル一致"))) {
+    if (aiReasonLabels.length >= 6) {
+      aiReasonLabels[aiReasonLabels.length - 1] = comboReason;
+    } else {
+      aiReasonLabels.push(comboReason);
+    }
+  }
+  const conflictReason = reasons.find((reason) => reason.includes("シグナル競合"));
+  if (conflictReason && !aiReasonLabels.some((reason) => reason.includes("シグナル競合"))) {
+    if (aiReasonLabels.length >= 6) {
+      aiReasonLabels[aiReasonLabels.length - 1] = conflictReason;
+    } else {
+      aiReasonLabels.push(conflictReason);
+    }
+  }
   const bollingerReason = reasons.find((reason) => reason.includes("+2σ超え（過熱）") || reason.includes("-2σ付近（売られ過ぎ）"));
   if (bollingerReason && !aiReasonLabels.some((reason) => reason.includes("+2σ超え（過熱）") || reason.includes("-2σ付近（売られ過ぎ）"))) {
     if (aiReasonLabels.length >= 6) {
