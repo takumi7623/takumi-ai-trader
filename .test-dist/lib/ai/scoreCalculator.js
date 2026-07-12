@@ -3,28 +3,31 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.analyzeStock = analyzeStock;
 const indicators_1 = require("../indicators");
 const expectedValueAnalyzer_1 = require("./expectedValueAnalyzer");
+const weightOptimizer_1 = require("./weightOptimizer");
 const trendLabels = {
     up: "上昇基調",
     neutral: "中立",
     volatile: "変動大",
     steady: "堅調",
 };
-const DEFAULT_WEIGHTS = {
-    rsi: 1,
-    macd: 1.05,
-    ma5: 0.95,
-    ma25: 1,
-    ma75: 1,
-    adx: 1,
-    atr: 0.9,
-    bollinger: 0.9,
-    supportResistance: 0.95,
-    volumeRatio: 0.95,
-    volumeSpike: 1,
-    trendStrength: 1.05,
-    lossRisk: 1.15,
-    probabilityUp: 1.1,
-};
+const DEFAULT_WEIGHTS = (0, weightOptimizer_1.optimizeAiScoreWeights)({
+    currentWeights: {
+        rsi: 1,
+        macd: 1.05,
+        ma5: 0.95,
+        ma25: 1,
+        ma75: 1,
+        adx: 1,
+        atr: 0.9,
+        bollinger: 0.9,
+        supportResistance: 0.95,
+        volumeRatio: 0.95,
+        volumeSpike: 1,
+        trendStrength: 1.05,
+        lossRisk: 1.15,
+        probabilityUp: 1.1,
+    },
+}).weights;
 const DEFAULT_LEARNING_PROFILE = {
     technicalWeight: 1,
     newsWeight: 1,
@@ -765,6 +768,11 @@ function analyzeStock(input, options) {
         const volumeSpike = volumeSurgeRate >= 1.6;
         const strongVolumeSpike = volumeSurgeRate >= 2;
         const volumeProfile = buildVolumeProfile(candles, latestVolume);
+        const vwapWindow = candles.slice(-20);
+        const vwapVolumeTotal = vwapWindow.reduce((sum, candle) => sum + candle.volume, 0);
+        const vwap = vwapVolumeTotal > 0
+            ? vwapWindow.reduce((sum, candle) => sum + (candle.close * candle.volume), 0) / vwapVolumeTotal
+            : latestClose;
         latestMacdHistogram = latestMacd?.histogram ?? 0;
         macdHistogramDelta = latestMacd && previousMacd ? latestMacd.histogram - previousMacd.histogram : 0;
         const closes = candles.map((candle) => candle.close);
@@ -938,31 +946,23 @@ function analyzeStock(input, options) {
             bullishVotes += 1;
             reasons.push("上位足のトレンド強度が高く、押し目買いの継続性があります。\n");
         }
-        if (latestAdx >= 35) {
-            score += 6;
-            bullishVotes += 1;
-            reasons.push("ADXが高く、トレンドの強さが十分にあります。");
-        }
-        else if (latestAdx >= 25) {
+        if (latestAdx > 25) {
             score += 3;
             bullishVotes += 1;
-            reasons.push("ADXがトレンド成立の目安を上回っています。");
-        }
-        else if (latestAdx > 0 && latestAdx < 15) {
-            score -= 4;
-            bearishVotes += 1;
-            reasons.push("ADXが低く、方向感の弱い相場です。");
+            reasons.push(`強いトレンド（ADX ${latestAdx.toFixed(1)}）です。`);
         }
         if (latestBollinger) {
             if (latestClose > latestBollinger.upper) {
                 score += 5;
                 bullishVotes += 1;
                 reasons.push("株価がボリンジャーバンド上限を上抜けており、強いトレンド継続の可能性があります。");
+                reasons.push("+2σ超え（過熱）");
             }
             else if (latestClose < latestBollinger.lower) {
                 score -= 6;
                 bearishVotes += 1;
                 reasons.push("株価がボリンジャーバンド下限を割れており、下落圧力が強いです。");
+                reasons.push("-2σ付近（売られ過ぎ）");
             }
             else if (pricePosition >= 0.35 && pricePosition <= 0.7) {
                 score += 3;
@@ -1027,14 +1027,37 @@ function analyzeStock(input, options) {
             bullishVotes += 1;
             reasons.push("直近の出来高が平均より増えており、ブレイクの信頼度が高まっています。");
         }
+        if (volumeAverage > 0 && latestVolume >= volumeAverage * 2) {
+            score += 4;
+            bullishVotes += 1;
+            reasons.push("出来高急増");
+        }
+        if (volumeAverage > 0 && vwapVolumeTotal > 0) {
+            if (latestClose > vwap) {
+                score += 3;
+                bullishVotes += 1;
+                reasons.push(`VWAP上で推移（VWAP ${vwap.toFixed(2)}）しています。`);
+            }
+            else if (latestClose < vwap) {
+                score -= 3;
+                bearishVotes += 1;
+                reasons.push(`VWAP下で推移（VWAP ${vwap.toFixed(2)}）しています。`);
+            }
+        }
         if (latestAtr > 0) {
             if (atrPercent >= 6) {
                 score -= 4;
                 bearishVotes += 1;
                 reasons.push("ATRが高く、値動きが荒いためエントリーの難易度が上がっています。");
+                reasons.push(`過度な値動き（ATR ${atrPercent.toFixed(2)}%）です。`);
             }
             else if (atrPercent <= 2.5) {
                 score += 2;
+            }
+            else {
+                score += 1;
+                bullishVotes += 1;
+                reasons.push(`適度な値動き（ATR ${atrPercent.toFixed(2)}%）です。`);
             }
         }
     }
@@ -1424,6 +1447,33 @@ function analyzeStock(input, options) {
         }
         else {
             aiReasonLabels.push(breakoutReason);
+        }
+    }
+    const vwapReason = reasons.find((reason) => reason.includes("VWAP上で推移") || reason.includes("VWAP下で推移"));
+    if (vwapReason && !aiReasonLabels.some((reason) => reason.includes("VWAP上で推移") || reason.includes("VWAP下で推移"))) {
+        if (aiReasonLabels.length >= 6) {
+            aiReasonLabels[aiReasonLabels.length - 1] = vwapReason;
+        }
+        else {
+            aiReasonLabels.push(vwapReason);
+        }
+    }
+    const volumeSpikeReason = reasons.find((reason) => reason.includes("出来高急増"));
+    if (volumeSpikeReason && !aiReasonLabels.some((reason) => reason.includes("出来高急増"))) {
+        if (aiReasonLabels.length >= 6) {
+            aiReasonLabels[aiReasonLabels.length - 1] = volumeSpikeReason;
+        }
+        else {
+            aiReasonLabels.push(volumeSpikeReason);
+        }
+    }
+    const bollingerReason = reasons.find((reason) => reason.includes("+2σ超え（過熱）") || reason.includes("-2σ付近（売られ過ぎ）"));
+    if (bollingerReason && !aiReasonLabels.some((reason) => reason.includes("+2σ超え（過熱）") || reason.includes("-2σ付近（売られ過ぎ）"))) {
+        if (aiReasonLabels.length >= 6) {
+            aiReasonLabels[aiReasonLabels.length - 1] = bollingerReason;
+        }
+        else {
+            aiReasonLabels.push(bollingerReason);
         }
     }
     const aiReason = aiReasonLabels.slice(0, 6).map((reason) => `• ${reason}`);
