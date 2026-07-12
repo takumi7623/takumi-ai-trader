@@ -179,11 +179,19 @@ export type Tepou30Item = {
   expectedValuePercent: number;
   winRate: number;
   confidence: number;
+  trendStrength?: string;
+  riskLevel?: "低" | "中" | "高";
+  expectedValue?: number;
+  riskRewardRatio?: number;
+  entryPriority?: number;
+  volumeRatio?: number;
+  volatilityPercent?: number;
   newsSentiment?: NewsSentiment["sentiment"];
   newsImportanceStars?: number;
   newsSummary?: string;
   newsPositiveCount?: number;
   newsNegativeCount?: number;
+  selectionReason?: string;
 };
 
 export type Tepou30Status = "idle" | "building" | "ready" | "error";

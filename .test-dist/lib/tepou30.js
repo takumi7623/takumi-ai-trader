@@ -9,6 +9,7 @@ const scoreCalculator_1 = require("./ai/scoreCalculator");
 const backtestLearning_1 = require("./ai/backtestLearning");
 const promises_1 = require("node:fs/promises");
 const node_path_1 = __importDefault(require("node:path"));
+const indicators_1 = require("./indicators");
 const jquantsClient_1 = require("./jquantsClient");
 const marketContext_1 = require("./marketContext");
 const newsAnalyzer_1 = require("./newsAnalyzer");
@@ -150,27 +151,112 @@ function normalizeLearningProfile(profile) {
         gapWeight: clamp(profile?.gapWeight ?? DEFAULT_LEARNING_PROFILE.gapWeight, 0.6, 1.8),
     };
 }
+function trendStrengthScore(trendStrength) {
+    if (trendStrength === "非常に強い") {
+        return 100;
+    }
+    if (trendStrength === "強い") {
+        return 80;
+    }
+    if (trendStrength === "標準") {
+        return 60;
+    }
+    if (trendStrength === "弱い") {
+        return 35;
+    }
+    return 50;
+}
+function newsScore(item) {
+    const sentimentScore = item.newsSentiment === "bullish" ? 100 : item.newsSentiment === "bearish" ? 0 : 50;
+    const importanceScore = clamp((item.newsImportanceStars ?? 1) * 20, 0, 100);
+    return clamp(sentimentScore * 0.7 + importanceScore * 0.3, 0, 100);
+}
+function volumeScore(volumeRatio) {
+    if (!volumeRatio || !Number.isFinite(volumeRatio)) {
+        return 50;
+    }
+    if (volumeRatio >= 2) {
+        return 92;
+    }
+    if (volumeRatio >= 1.4) {
+        return 78;
+    }
+    if (volumeRatio >= 1) {
+        return 62;
+    }
+    return 42;
+}
+function volatilityScore(volatilityPercent, riskLevel) {
+    if (riskLevel === "高") {
+        return 42;
+    }
+    if (riskLevel === "低") {
+        return 78;
+    }
+    if (!volatilityPercent || !Number.isFinite(volatilityPercent)) {
+        return 55;
+    }
+    if (volatilityPercent >= 6) {
+        return 38;
+    }
+    if (volatilityPercent >= 3) {
+        return 68;
+    }
+    return 58;
+}
+function riskScore(item) {
+    return clamp(100 - item.lossRiskPercent * 11, 0, 100);
+}
+function buildSelectionReason(item) {
+    const segments = [
+        `トレンド:${item.trendStrength ?? "不明"}`,
+        `ニュース:${item.newsSentiment ?? "neutral"}`,
+        `出来高:${item.volumeRatio ? item.volumeRatio.toFixed(2) : "1.00"}x`,
+        `ボラ:${item.volatilityPercent ? item.volatilityPercent.toFixed(2) : "0.00"}%`,
+        `リスク:${item.riskLevel ?? "中"}`,
+        `期待値:${(item.expectedValue ?? item.expectedValuePercent).toFixed(2)}%`,
+        `勝率:${item.winRate.toFixed(2)}%`,
+        `RR:${(item.riskRewardRatio ?? itemRiskReward(item)).toFixed(2)}x`,
+    ];
+    return segments.join(" / ");
+}
+function dedupeTepou30Items(items) {
+    const unique = new Map();
+    for (const item of items) {
+        const current = unique.get(item.code);
+        if (!current) {
+            unique.set(item.code, item);
+            continue;
+        }
+        if (rankingCompositeScore(item) > rankingCompositeScore(current)) {
+            unique.set(item.code, item);
+        }
+    }
+    return [...unique.values()];
+}
 function rankingCompositeScore(item) {
-    const expectedReturn = ((item.takeProfitPrice - item.entryPrice) / Math.max(item.entryPrice, 1)) * 100;
-    const expectedLoss = ((item.entryPrice - item.stopLossPrice) / Math.max(item.entryPrice, 1)) * 100;
-    const rr = expectedLoss > 0 ? expectedReturn / expectedLoss : 0;
-    const expectancy = item.expectedValuePercent;
+    const rr = item.riskRewardRatio ?? itemRiskReward(item);
+    const expectedValue = item.expectedValue ?? item.expectedValuePercent;
+    const trendComponent = trendStrengthScore(item.trendStrength);
+    const newsComponent = newsScore(item);
+    const volumeComponent = volumeScore(item.volumeRatio);
+    const volatilityComponent = volatilityScore(item.volatilityPercent, item.riskLevel);
+    const riskComponent = riskScore(item);
     const winRateComponent = item.winRate;
     const scoreComponent = item.score;
     const confidenceComponent = item.confidence;
-    const lossRiskComponent = clamp(100 - item.lossRiskPercent * 10, 0, 100);
-    const expectancyComponent = clamp(expectancy * 14 + rr * 9 + 48, 0, 100);
+    const expectancyComponent = clamp(expectedValue * 14 + rr * 9 + 48, 0, 100);
     const downsidePenalty = item.lossRiskPercent >= 5.5 ? 8 : item.lossRiskPercent >= 4.5 ? 4 : 0;
-    const qualityBonus = item.expectedValuePercent >= 1.2 && item.winRate >= 60 ? 4 : 0;
+    const qualityBonus = expectedValue >= 1.2 && item.winRate >= 60 ? 4 : 0;
     const rrComponent = clamp(rr * 30, 0, 100);
     const probabilityBlend = clamp(item.probability5m * 0.2 + item.probability15m * 0.35 + item.probability1d * 0.45, 0, 100);
     const probabilityConsistency = clamp(100 - Math.abs(item.probability5m - item.probability1d) * 1.4, 0, 100);
-    const riskAdjustedExpectancy = clamp(item.expectedValuePercent * 14 - item.lossRiskPercent * 3 + 60, 0, 100);
-    const edgeScore = clamp((item.winRate - 50) * 2 + item.expectedValuePercent * 8 + rr * 10 + 50, 0, 100);
+    const riskAdjustedExpectancy = clamp(expectedValue * 14 - item.lossRiskPercent * 3 + 60, 0, 100);
+    const edgeScore = clamp((item.winRate - 50) * 2 + expectedValue * 8 + rr * 10 + 50, 0, 100);
     const p15Component = item.probability15m;
     const p5Component = item.probability5m;
     const p1dComponent = item.probability1d;
-    return (expectancyComponent * 0.24
+    return expectancyComponent * 0.22
         + riskAdjustedExpectancy * 0.17
         + winRateComponent * 0.17
         + probabilityBlend * 0.12
@@ -179,12 +265,16 @@ function rankingCompositeScore(item) {
         + probabilityConsistency * 0.06
         + scoreComponent * 0.05
         + confidenceComponent * 0.06
-        + lossRiskComponent * 0.04
+        + riskComponent * 0.04
         + p1dComponent * 0.01
         + p15Component * 0.005
         + p5Component * 0.005
+        + trendComponent * 0.12
+        + newsComponent * 0.1
+        + volumeComponent * 0.1
+        + volatilityComponent * 0.08
         + qualityBonus
-        - downsidePenalty);
+        - downsidePenalty;
 }
 function dayTraderCompositeScore(item) {
     const riskBuffer = clamp(100 - item.lossRiskPercent * 11, 0, 100);
@@ -277,9 +367,14 @@ function recalibrateUniverseScores(items) {
     });
 }
 function rankTepou30Items(items, sortMode = "ai-total") {
-    return [...items]
+    return dedupeTepou30Items(items)
         .sort((left, right) => {
         if (sortMode === "ai-total") {
+            const rightComposite = rankingCompositeScore(right);
+            const leftComposite = rankingCompositeScore(left);
+            if (rightComposite !== leftComposite) {
+                return rightComposite - leftComposite;
+            }
             if (right.score !== left.score) {
                 return right.score - left.score;
             }
@@ -1381,6 +1476,48 @@ async function buildTepou30(timeframe, sortMode) {
         }
         const result = (0, scoreCalculator_1.analyzeStock)({ query: candidate.code, stock }, { weights: state.optimizedWeights, learningProfile: state.optimizedLearningProfile });
         const winRate = result.winRate;
+        const latestClose = candidate.candles[candidate.candles.length - 1]?.close ?? result.entryPrice;
+        const latestVolume = candidate.candles[candidate.candles.length - 1]?.volume ?? 0;
+        const volumeAverage = (0, indicators_1.calculateVolumeAverage)(candidate.candles, 20);
+        const volumeRatio = volumeAverage > 0 ? latestVolume / volumeAverage : 1;
+        const atrSeries = (0, indicators_1.calculateAtr)(candidate.candles, 14);
+        const latestAtr = atrSeries[atrSeries.length - 1]?.value ?? 0;
+        const volatilityPercent = latestClose > 0 ? (latestAtr / latestClose) * 100 : 0;
+        const trendStrength = result.trendStrength;
+        const riskLevel = result.riskLevel;
+        const expectedValue = result.expectedValue;
+        const riskRewardRatio = result.riskRewardRatio;
+        const entryPriority = result.entryPriority;
+        const selectionReason = buildSelectionReason({
+            rank: 0,
+            code: candidate.code,
+            name: result.name,
+            sector: result.sector,
+            score: result.score,
+            judgment: result.judgment,
+            probability5m: result.probability5m,
+            probability15m: result.probability15m,
+            probability1d: result.probability1d,
+            entryPrice: result.entryPrice,
+            takeProfitPrice: result.takeProfitPrice,
+            stopLossPrice: result.stopLossPrice,
+            lossRiskPercent: result.lossRiskPercent,
+            expectedValuePercent: result.expectedValuePercent,
+            winRate,
+            confidence: result.confidence,
+            trendStrength,
+            riskLevel,
+            expectedValue,
+            riskRewardRatio,
+            entryPriority,
+            volumeRatio,
+            volatilityPercent,
+            newsSentiment: stock.newsAnalysis?.sentiment,
+            newsImportanceStars: stock.newsAnalysis?.starRating,
+            newsSummary: stock.newsAnalysis?.summary,
+            newsPositiveCount: stock.newsAnalysis?.positiveCount,
+            newsNegativeCount: stock.newsAnalysis?.negativeCount,
+        });
         scored.push({
             rank: 0,
             code: candidate.code,
@@ -1398,11 +1535,19 @@ async function buildTepou30(timeframe, sortMode) {
             expectedValuePercent: result.expectedValuePercent,
             winRate,
             confidence: result.confidence,
+            trendStrength,
+            riskLevel,
+            expectedValue,
+            riskRewardRatio,
+            entryPriority,
+            volumeRatio,
+            volatilityPercent,
             newsSentiment: stock.newsAnalysis?.sentiment,
             newsImportanceStars: stock.newsAnalysis?.starRating,
             newsSummary: stock.newsAnalysis?.summary,
             newsPositiveCount: stock.newsAnalysis?.positiveCount,
             newsNegativeCount: stock.newsAnalysis?.negativeCount,
+            selectionReason,
         });
     }
     if (scored.length > 0) {
