@@ -19,7 +19,9 @@ export type BacktestLearningPlan = {
   learn: (input: BacktestLearningInput) => BacktestLearningResult;
 };
 
-const LEARNING_CAP = 0.05;
+const LEARNING_CAP = 0.03;
+const MIN_WEIGHT = 0.3;
+const MAX_WEIGHT = 3;
 
 const TREND_WEIGHTS: (keyof AiScoreWeights)[] = [
   "rsi",
@@ -43,7 +45,7 @@ function clamp(value: number, min: number, max: number) {
 }
 
 function adjustWeight(base: number, factor: number) {
-  return Number((base * factor).toFixed(4));
+  return Number(clamp(base * factor, MIN_WEIGHT, MAX_WEIGHT).toFixed(4));
 }
 
 function buildLearningSignal(backtest?: Tepou30BacktestMetrics) {
@@ -86,7 +88,7 @@ function buildNotes(backtest?: Tepou30BacktestMetrics) {
   }
 
   return [
-    "Backtest snapshot received, but automatic learning is disabled in Phase1.",
+    "Backtest snapshot received and learning weights are being adjusted within a ±3% range.",
     `Period: ${backtest.periodDays} days`,
     `Trades: ${backtest.totalTrades}`,
     `Win rate: ${backtest.winRate.toFixed(2)}%`,

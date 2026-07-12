@@ -2,7 +2,9 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.learnWeightsFromBacktest = learnWeightsFromBacktest;
 exports.createBacktestLearningPlan = createBacktestLearningPlan;
-const LEARNING_CAP = 0.05;
+const LEARNING_CAP = 0.03;
+const MIN_WEIGHT = 0.3;
+const MAX_WEIGHT = 3;
 const TREND_WEIGHTS = [
     "rsi",
     "macd",
@@ -22,7 +24,7 @@ function clamp(value, min, max) {
     return Math.min(Math.max(value, min), max);
 }
 function adjustWeight(base, factor) {
-    return Number((base * factor).toFixed(4));
+    return Number(clamp(base * factor, MIN_WEIGHT, MAX_WEIGHT).toFixed(4));
 }
 function buildLearningSignal(backtest) {
     if (!backtest || backtest.totalTrades <= 0) {
@@ -54,7 +56,7 @@ function buildNotes(backtest) {
         return ["No backtest snapshot provided. Returning current weights unchanged."];
     }
     return [
-        "Backtest snapshot received, but automatic learning is disabled in Phase1.",
+        "Backtest snapshot received and learning weights are being adjusted within a ±3% range.",
         `Period: ${backtest.periodDays} days`,
         `Trades: ${backtest.totalTrades}`,
         `Win rate: ${backtest.winRate.toFixed(2)}%`,
