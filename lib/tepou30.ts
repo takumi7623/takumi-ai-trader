@@ -1,4 +1,5 @@
 import { analyzeStock } from "./ai/scoreCalculator";
+import { learnWeightsFromBacktest } from "./ai/backtestLearning";
 import { mkdir, readFile, writeFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { fetchJQuantsJson, JQuantsHttpError } from "./jquantsClient";
@@ -816,41 +817,42 @@ function optimizeWeights(
   for (const weights of weightProfiles) {
     for (const learningProfile of learningProfiles) {
       const scoredItems = candidates
-      .map((candidate) => {
-        const stock = buildStockFromCandles(candidate.code, candidate.candles, candidate.meta, timeframe);
-        if (!stock) {
-          return null;
-        }
+        .map((candidate) => {
+          const stock = buildStockFromCandles(candidate.code, candidate.candles, candidate.meta, timeframe);
+          if (!stock) {
+            return null;
+          }
 
-        const result = analyzeStock({ query: candidate.code, stock }, { weights, learningProfile });
-        return {
-          rank: 0,
-          code: candidate.code,
-          name: result.name,
-          sector: result.sector,
-          score: result.score,
-          judgment: result.judgment,
-          probability5m: result.probability5m,
-          probability15m: result.probability15m,
-          probability1d: result.probability1d,
-          entryPrice: result.entryPrice,
-          takeProfitPrice: result.takeProfitPrice,
-          stopLossPrice: result.stopLossPrice,
-          lossRiskPercent: result.lossRiskPercent,
-          expectedValuePercent: result.expectedValuePercent,
-          winRate: result.winRate,
-          confidence: result.confidence,
-        } satisfies Tepou30Item;
-      })
-      .filter((item): item is Tepou30Item => Boolean(item));
+          const result = analyzeStock({ query: candidate.code, stock }, { weights, learningProfile });
+          return {
+            rank: 0,
+            code: candidate.code,
+            name: result.name,
+            sector: result.sector,
+            score: result.score,
+            judgment: result.judgment,
+            probability5m: result.probability5m,
+            probability15m: result.probability15m,
+            probability1d: result.probability1d,
+            entryPrice: result.entryPrice,
+            takeProfitPrice: result.takeProfitPrice,
+            stopLossPrice: result.stopLossPrice,
+            lossRiskPercent: result.lossRiskPercent,
+            expectedValuePercent: result.expectedValuePercent,
+            winRate: result.winRate,
+            confidence: result.confidence,
+          } satisfies Tepou30Item;
+        })
+        .filter((item): item is Tepou30Item => Boolean(item));
 
       const ranked = rankTepou30Items(scoredItems);
       const backtest = runBacktest(ranked, candidateMap, timeframe, weights, learningProfile, horizon);
       const objective = backtestObjective(backtest);
+      const learnedWeights = learnWeightsFromBacktest({ currentWeights: weights, backtest }).weights;
 
       if (objective > bestObjective) {
         bestObjective = objective;
-        bestWeights = weights;
+        bestWeights = learnedWeights;
         bestLearningProfile = learningProfile;
         bestBacktest = backtest;
       }

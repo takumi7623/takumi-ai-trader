@@ -6,6 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.getTepou30 = getTepou30;
 exports.getTepou30LearningProfile = getTepou30LearningProfile;
 const scoreCalculator_1 = require("./ai/scoreCalculator");
+const backtestLearning_1 = require("./ai/backtestLearning");
 const promises_1 = require("node:fs/promises");
 const node_path_1 = __importDefault(require("node:path"));
 const jquantsClient_1 = require("./jquantsClient");
@@ -638,9 +639,10 @@ function optimizeWeights(candidates, timeframe, horizon, preferredWeights, prefe
             const ranked = rankTepou30Items(scoredItems);
             const backtest = runBacktest(ranked, candidateMap, timeframe, weights, learningProfile, horizon);
             const objective = backtestObjective(backtest);
+            const learnedWeights = (0, backtestLearning_1.learnWeightsFromBacktest)({ currentWeights: weights, backtest }).weights;
             if (objective > bestObjective) {
                 bestObjective = objective;
-                bestWeights = weights;
+                bestWeights = learnedWeights;
                 bestLearningProfile = learningProfile;
                 bestBacktest = backtest;
             }
