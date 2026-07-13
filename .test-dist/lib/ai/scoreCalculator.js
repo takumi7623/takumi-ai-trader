@@ -997,49 +997,72 @@ function analyzeStock(input, options) {
             reasons.push("直近20本の安値を更新しており、下落継続に警戒が必要です。");
         }
         if (volumeAverage > 0 && volumeSpike) {
-            score += strongVolumeSpike ? 9 : 6;
             bullishVotes += 1;
             reasons.push(`出来高が平均の${volumeSurgeRate.toFixed(2)}倍で、資金流入が強まっています。`);
         }
         else if (latestVolume < volumeAverage * 0.85) {
-            score -= 5;
             bearishVotes += 1;
             reasons.push("出来高が平均を下回っており、値動きの信頼性は高くありません。");
         }
         if (volumeProfile.reason) {
             reasons.push(volumeProfile.reason);
-            const weightedVolumeScore = Math.round(Math.abs(volumeProfile.score) * learningProfile.volumeWeight);
             if (volumeProfile.bullish) {
-                score += Math.max(0, weightedVolumeScore);
                 bullishVotes += 1;
             }
             else if (volumeProfile.bearish) {
-                score -= Math.abs(weightedVolumeScore);
                 bearishVotes += 1;
             }
         }
         if (volumeProfile.surgeRatio >= 1.8 || volumeProfile.trendPercent >= 15) {
-            score += Math.max(1, Math.round(2 * learningProfile.volumeWeight));
             bullishVotes += 1;
             reasons.push("直近の出来高が平均より増えており、ブレイクの信頼度が高まっています。");
         }
         if (volumeAverage > 0 && latestVolume >= volumeAverage * 2) {
-            score += 4;
             bullishVotes += 1;
             reasons.push("出来高急増");
         }
+        let vwapVolumeScore = 0;
         if (volumeAverage > 0 && vwapVolumeTotal > 0) {
             if (latestClose > vwap) {
-                score += 3;
+                vwapVolumeScore = 3;
                 bullishVotes += 1;
                 reasons.push(`VWAP上で推移（VWAP ${vwap.toFixed(2)}）しています。`);
             }
             else if (latestClose < vwap) {
-                score -= 3;
+                vwapVolumeScore = -3;
                 bearishVotes += 1;
                 reasons.push(`VWAP下で推移（VWAP ${vwap.toFixed(2)}）しています。`);
             }
         }
+        const relativeVolume = volumeAverage > 0 ? latestVolume / volumeAverage : 1;
+        const volumeTrend = volumeProfile.trendPercent;
+        const volumeMomentum = volumeSurgeRate - 1;
+        const volumeSpikeComponent = volumeAverage > 0 && volumeSpike
+            ? (strongVolumeSpike ? 9 : 6)
+            : latestVolume < volumeAverage * 0.85
+                ? -5
+                : 0;
+        const relativeVolumeComponent = relativeVolume >= 2 ? 4
+            : relativeVolume >= 1.2 ? 2
+                : relativeVolume <= 0.85 ? -2
+                    : 0;
+        const volumeTrendComponent = volumeTrend >= 20 ? 4
+            : volumeTrend >= 10 ? 2
+                : volumeTrend <= -10 ? -3
+                    : 0;
+        const volumeMomentumComponent = volumeMomentum >= 0.8 ? 3
+            : volumeMomentum >= 0.3 ? 1
+                : volumeMomentum <= -0.2 ? -2
+                    : 0;
+        const profileVolumeComponent = Math.round(volumeProfile.score * learningProfile.volumeWeight);
+        const volumeCompositeScore = clamp(Math.round((volumeSpikeComponent
+            + relativeVolumeComponent
+            + volumeTrendComponent
+            + volumeMomentumComponent
+            + profileVolumeComponent
+            + vwapVolumeScore) * 0.6), -14, 14);
+        score += volumeCompositeScore;
+        reasons.push(`出来高総合スコアは${volumeCompositeScore}で、出来高・急増度・平均比・VWAP・トレンドを統合評価しています。`);
         if (latestAtr > 0) {
             if (atrPercent >= 6) {
                 score -= 4;
