@@ -66,6 +66,40 @@ type WeightLearningStore = {
   byHorizon: Record<WeightHorizon, HorizonLearningState>;
 };
 
+type Tepou30SnapshotSignal = "BUY" | "HOLD" | "SELL";
+
+type Tepou30SnapshotItem = Tepou30Item & {
+  signal: Tepou30SnapshotSignal;
+};
+
+type Tepou30SnapshotSummary = {
+  topCount: number;
+  buyCount: number;
+  holdCount: number;
+  sellCount: number;
+  negativeEvBuyCount: number;
+  avgScore: number;
+  avgExpectedValuePercent: number;
+  avgWinRate: number;
+  avgConfidence: number;
+  score95BuyCount: number;
+  score95HoldCount: number;
+  score95SellCount: number;
+};
+
+type Tepou30SnapshotPayload = {
+  version: number;
+  timeframe: StockTimeframe;
+  sortMode: Tepou30SortMode;
+  createdAt: string;
+  sourceUpdatedAt: string;
+  optimizedWeights?: AiScoreWeights;
+  optimizedLearningProfile?: AiLearningProfile;
+  backtest?: Tepou30BacktestMetrics;
+  summary?: Partial<Tepou30SnapshotSummary>;
+  items: Tepou30SnapshotItem[];
+};
+
 const CACHE_TTL_MS = 15 * 60 * 1000;
 const TARGET_UNIVERSE_SIZE = 4000;
 const TARGET_CANDLE_DAYS = 30;
@@ -81,11 +115,13 @@ const RATE_LIMIT_COOLDOWN_MS = 20 * 60 * 1000;
 const BUILD_STALE_MS = 20_000;
 const MAX_PAGINATION_PAGES = 20;
 const CACHE_DIR = path.join(process.cwd(), ".cache");
+const SNAPSHOT_DIR = path.join(CACHE_DIR, "tepou30-snapshots");
 const MASTER_CACHE_PATH = path.join(CACHE_DIR, "jquants-master.json");
 const BARS_CACHE_DIR = path.join(CACHE_DIR, "jquants-bars");
 const LEARNING_STORE_PATH = path.join(CACHE_DIR, "tepou30-weights.json");
 const HORIZONS: WeightHorizon[] = ["5m", "15m", "1d"];
 const WEIGHT_HISTORY_LIMIT = 30;
+const SNAPSHOT_TOP_COUNT = 300;
 
 const JPX_META_OVERRIDES: Record<string, { name: string; sector: string }> = {
   "7203": { name: "トヨタ自動車", sector: "輸送用機器" },
@@ -144,6 +180,45 @@ function getBacktestConfig(horizon: WeightHorizon) {
   return { periodDays: BACKTEST_PERIOD_DAYS, holdDays: 2, step: 1 };
 }
 
+function getDynamicHoldDays(params: {
+  baseHoldDays: number;
+  timeframe: StockTimeframe;
+  score: number;
+  confidence: number;
+  expectedValuePercent: number;
+  probability5m: number;
+  probability15m: number;
+  probability1d: number;
+  volatilityPercent?: number;
+}) {
+  const {
+    baseHoldDays,
+    timeframe,
+    score,
+    confidence,
+    expectedValuePercent,
+    probability5m,
+    probability15m,
+    probability1d,
+    volatilityPercent = 0,
+  } = params;
+  const timeframeBias = timeframe === "5m" ? -0.2 : timeframe === "15m" ? 0.35 : 0.8;
+  const strengthBias = score >= 88 ? 1 : score >= 76 ? 0.5 : score >= 64 ? 0.2 : -0.35;
+  const confidenceBias = confidence >= 82 ? 0.45 : confidence >= 72 ? 0.2 : confidence <= 58 ? -0.25 : 0;
+  const expectedValueBias = expectedValuePercent >= 1.8 ? 0.9 : expectedValuePercent >= 0.9 ? 0.45 : expectedValuePercent <= 0.2 ? -0.4 : 0;
+  const probabilityBlend = timeframe === "5m"
+    ? probability5m * 0.55 + probability15m * 0.35 + probability1d * 0.1
+    : timeframe === "15m"
+      ? probability5m * 0.2 + probability15m * 0.55 + probability1d * 0.25
+      : probability5m * 0.1 + probability15m * 0.3 + probability1d * 0.6;
+  const probabilityBias = probabilityBlend >= 78 ? 0.75 : probabilityBlend >= 70 ? 0.4 : probabilityBlend <= 56 ? -0.45 : 0;
+  const volatilityBias = volatilityPercent >= 5 ? -1 : volatilityPercent >= 3.5 ? -0.55 : volatilityPercent <= 1.8 ? 0.2 : 0;
+  const adjustedHoldDays = baseHoldDays + timeframeBias + strengthBias + confidenceBias + expectedValueBias + probabilityBias + volatilityBias;
+  const maxHoldDays = timeframe === "5m" ? 3 : timeframe === "15m" ? 4 : 5;
+
+  return clamp(Math.round(adjustedHoldDays), 1, maxHoldDays);
+}
+
 function getDefaultLearningStore(): WeightLearningStore {
   return {
     byHorizon: {
@@ -170,6 +245,232 @@ function getDefaultLearningStore(): WeightLearningStore {
       },
     },
   };
+}
+
+function snapshotSignalFromJudgment(judgment: Tepou30Item["judgment"]): Tepou30SnapshotSignal {
+  if (judgment === "強い買い" || judgment === "買い") {
+    return "BUY";
+  }
+
+  if (judgment === "様子見") {
+    return "HOLD";
+  }
+
+  return "SELL";
+}
+
+function roundSnapshotMetric(value: number, digits = 2) {
+  return Number(value.toFixed(digits));
+}
+
+function buildTop300SnapshotSummary(items: Tepou30SnapshotItem[]) {
+  const buyCount = items.filter((item) => item.signal === "BUY").length;
+  const holdCount = items.filter((item) => item.signal === "HOLD").length;
+  const sellCount = items.filter((item) => item.signal === "SELL").length;
+  const negativeEvBuyCount = items.filter((item) => item.signal === "BUY" && item.expectedValuePercent < 0).length;
+  const score95BuyCount = items.filter((item) => item.score >= 95 && item.signal === "BUY").length;
+  const score95HoldCount = items.filter((item) => item.score >= 95 && item.signal === "HOLD").length;
+  const score95SellCount = items.filter((item) => item.score >= 95 && item.signal === "SELL").length;
+  const count = Math.max(items.length, 1);
+
+  return {
+    topCount: items.length,
+    buyCount,
+    holdCount,
+    sellCount,
+    negativeEvBuyCount,
+    avgScore: roundSnapshotMetric(items.reduce((sum, item) => sum + item.score, 0) / count),
+    avgExpectedValuePercent: roundSnapshotMetric(items.reduce((sum, item) => sum + item.expectedValuePercent, 0) / count, 3),
+    avgWinRate: roundSnapshotMetric(items.reduce((sum, item) => sum + item.winRate, 0) / count),
+    avgConfidence: roundSnapshotMetric(items.reduce((sum, item) => sum + item.confidence, 0) / count),
+    score95BuyCount,
+    score95HoldCount,
+    score95SellCount,
+  };
+}
+
+function snapshotFilePath(fileName: string) {
+  return path.join(SNAPSHOT_DIR, fileName);
+}
+
+async function readSnapshotPayload(fileName: string): Promise<Tepou30SnapshotPayload> {
+  const raw = await readFile(snapshotFilePath(fileName), "utf-8");
+  const parsed = JSON.parse(raw.replace(/^\uFEFF/, "")) as Tepou30SnapshotPayload;
+
+  return {
+    ...parsed,
+    items: Array.isArray(parsed.items) ? parsed.items : [],
+  };
+}
+
+function buildCompleteSnapshotSummary(snapshot: Tepou30SnapshotPayload): Tepou30SnapshotSummary {
+  return {
+    ...buildTop300SnapshotSummary(snapshot.items),
+    ...(snapshot.summary ?? {}),
+  };
+}
+
+async function listSnapshotFiles(timeframe: StockTimeframe, sortMode: Tepou30SortMode) {
+  try {
+    const files = await readdir(SNAPSHOT_DIR);
+    const prefix = `tepou30-top300-${timeframe}-${sortMode}-`;
+    return files
+      .filter((file) => file.startsWith(prefix) && file.endsWith(".json") && !file.endsWith("-latest.json"))
+      .sort((left, right) => right.localeCompare(left));
+  } catch {
+    return [];
+  }
+}
+
+function diffNumber(before: number, after: number, digits = 3) {
+  return roundSnapshotMetric(after - before, digits);
+}
+
+function buildSnapshotItemDiffs(beforeItems: Tepou30SnapshotItem[], afterItems: Tepou30SnapshotItem[]) {
+  const beforeMap = new Map(beforeItems.map((item) => [item.code, item]));
+  const afterMap = new Map(afterItems.map((item) => [item.code, item]));
+  const codes = [...new Set([...beforeMap.keys(), ...afterMap.keys()])].sort();
+
+  return codes.map((code) => {
+    const before = beforeMap.get(code);
+    const after = afterMap.get(code);
+
+    return {
+      code,
+      rankBefore: before?.rank ?? null,
+      rankAfter: after?.rank ?? null,
+      rankDelta: before && after ? after.rank - before.rank : null,
+      signal: {
+        before: before?.signal ?? null,
+        after: after?.signal ?? null,
+      },
+      judgment: {
+        before: before?.judgment ?? null,
+        after: after?.judgment ?? null,
+      },
+      score: {
+        before: before?.score ?? null,
+        after: after?.score ?? null,
+        delta: before && after ? diffNumber(before.score, after.score, 2) : null,
+      },
+      expectedValuePercent: {
+        before: before?.expectedValuePercent ?? null,
+        after: after?.expectedValuePercent ?? null,
+        delta: before && after ? diffNumber(before.expectedValuePercent, after.expectedValuePercent, 3) : null,
+      },
+      winRate: {
+        before: before?.winRate ?? null,
+        after: after?.winRate ?? null,
+        delta: before && after ? diffNumber(before.winRate, after.winRate, 2) : null,
+      },
+      confidence: {
+        before: before?.confidence ?? null,
+        after: after?.confidence ?? null,
+        delta: before && after ? diffNumber(before.confidence, after.confidence, 2) : null,
+      },
+    };
+  });
+}
+
+function buildSnapshotSummaryDiff(before: Tepou30SnapshotSummary, after: Tepou30SnapshotSummary) {
+  return {
+    buyCount: { before: before.buyCount, after: after.buyCount, delta: after.buyCount - before.buyCount },
+    holdCount: { before: before.holdCount, after: after.holdCount, delta: after.holdCount - before.holdCount },
+    sellCount: { before: before.sellCount, after: after.sellCount, delta: after.sellCount - before.sellCount },
+    negativeEvBuyCount: {
+      before: before.negativeEvBuyCount,
+      after: after.negativeEvBuyCount,
+      delta: after.negativeEvBuyCount - before.negativeEvBuyCount,
+    },
+    score95BuyCount: {
+      before: before.score95BuyCount,
+      after: after.score95BuyCount,
+      delta: after.score95BuyCount - before.score95BuyCount,
+    },
+    score95HoldCount: {
+      before: before.score95HoldCount,
+      after: after.score95HoldCount,
+      delta: after.score95HoldCount - before.score95HoldCount,
+    },
+    score95SellCount: {
+      before: before.score95SellCount,
+      after: after.score95SellCount,
+      delta: after.score95SellCount - before.score95SellCount,
+    },
+    avgScore: { before: before.avgScore, after: after.avgScore, delta: diffNumber(before.avgScore, after.avgScore, 2) },
+    avgExpectedValuePercent: {
+      before: before.avgExpectedValuePercent,
+      after: after.avgExpectedValuePercent,
+      delta: diffNumber(before.avgExpectedValuePercent, after.avgExpectedValuePercent, 3),
+    },
+    avgWinRate: { before: before.avgWinRate, after: after.avgWinRate, delta: diffNumber(before.avgWinRate, after.avgWinRate, 2) },
+    avgConfidence: {
+      before: before.avgConfidence,
+      after: after.avgConfidence,
+      delta: diffNumber(before.avgConfidence, after.avgConfidence, 2),
+    },
+  };
+}
+
+async function saveTop300Snapshot(params: {
+  timeframe: StockTimeframe;
+  sortMode: Tepou30SortMode;
+  updatedAt: number;
+  items: Tepou30Item[];
+  signalByCode: Map<string, Tepou30SnapshotSignal>;
+  optimizedWeights: AiScoreWeights;
+  optimizedLearningProfile: AiLearningProfile;
+  backtest: Tepou30BacktestMetrics;
+}) {
+  const {
+    timeframe,
+    sortMode,
+    updatedAt,
+    items,
+    signalByCode,
+    optimizedWeights,
+    optimizedLearningProfile,
+    backtest,
+  } = params;
+
+  if (items.length === 0) {
+    return;
+  }
+
+  const snapshotItems: Tepou30SnapshotItem[] = items.slice(0, SNAPSHOT_TOP_COUNT).map((item) => ({
+    ...item,
+    signal: signalByCode.get(item.code) ?? snapshotSignalFromJudgment(item.judgment),
+  }));
+  const createdAt = new Date(updatedAt).toISOString();
+  const stamp = createdAt.replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+  const payload = {
+    version: 1,
+    timeframe,
+    sortMode,
+    createdAt,
+    sourceUpdatedAt: createdAt,
+    optimizedWeights,
+    optimizedLearningProfile,
+    backtest,
+    summary: buildTop300SnapshotSummary(snapshotItems),
+    items: snapshotItems,
+  };
+
+  try {
+    await mkdir(SNAPSHOT_DIR, { recursive: true });
+    await writeFile(
+      path.join(SNAPSHOT_DIR, `tepou30-top300-${timeframe}-${sortMode}-${stamp}.json`),
+      JSON.stringify(payload),
+      "utf-8",
+    );
+    await writeFile(
+      path.join(SNAPSHOT_DIR, `tepou30-top300-${timeframe}-${sortMode}-latest.json`),
+      JSON.stringify(payload),
+      "utf-8",
+    );
+  } catch {
+    // Ignore snapshot write failures to avoid blocking Tepou30 generation.
+  }
 }
 
 const stateByTimeframe = new Map<StockTimeframe, Tepou30State>();
@@ -349,8 +650,7 @@ function rankingCompositeScore(item: Tepou30Item) {
   const p15Component = item.probability15m;
   const p5Component = item.probability5m;
   const p1dComponent = item.probability1d;
-
-  return expectancyComponent * 0.22
+  const baseComposite = expectancyComponent * 0.22
     + riskAdjustedExpectancy * 0.17
     + winRateComponent * 0.17
     + probabilityBlend * 0.12
@@ -369,6 +669,26 @@ function rankingCompositeScore(item: Tepou30Item) {
     + volatilityComponent * 0.08
     + qualityBonus
     - downsidePenalty;
+  const newsDirection = item.newsSentiment === "bullish" ? 1 : item.newsSentiment === "bearish" ? -1 : 0;
+  const newsConfidence = clamp((item.newsImportanceStars ?? 1) / 5, 0, 1);
+  const trendDirection = item.trendStrength === "非常に強い" || item.trendStrength === "強い"
+    ? 1
+    : item.trendStrength === "弱い"
+      ? -1
+      : 0;
+  const newsTrendAlignment = newsDirection === 0 ? 0 : newsDirection * trendDirection;
+  const expectedNorm = clamp((expectedValue - 0.6) / 2.4, -1, 1);
+  const confidenceNorm = clamp((item.confidence - 62) / 28, -1, 1);
+  const riskNorm = clamp((4.8 - item.lossRiskPercent) / 3.2, -1, 1);
+  const microAdjustmentRaw =
+    expectedNorm * 0.42
+    + confidenceNorm * 0.24
+    + riskNorm * 0.2
+    + (newsTrendAlignment * newsConfidence) * 0.24;
+  const highScoreDamp = item.score >= 95 ? 0.35 : item.score >= 90 ? 0.65 : 1;
+  const microAdjustment = clamp(microAdjustmentRaw * highScoreDamp, -0.85, 0.85);
+
+  return baseComposite + microAdjustment;
 }
 
 function dayTraderCompositeScore(item: Tepou30Item) {
@@ -681,13 +1001,28 @@ function buildTradeReturn(
 
   for (let index = entryIndex + 1; index <= lastIndex; index += 1) {
     const candle = candles[index];
+    const hitStopLoss = candle.low <= stopLoss;
+    const hitTakeProfit = candle.high >= takeProfit;
 
-    if (candle.low <= stopLoss) {
+    if (hitStopLoss && hitTakeProfit) {
+      if (candle.open <= stopLoss) {
+        exit = stopLoss;
+      } else if (candle.open >= takeProfit) {
+        exit = takeProfit;
+      } else {
+        const distanceToStop = Math.abs(candle.open - stopLoss);
+        const distanceToTake = Math.abs(takeProfit - candle.open);
+        exit = distanceToStop <= distanceToTake ? stopLoss : takeProfit;
+      }
+      break;
+    }
+
+    if (hitStopLoss) {
       exit = stopLoss;
       break;
     }
 
-    if (candle.high >= takeProfit) {
+    if (hitTakeProfit) {
       exit = takeProfit;
       break;
     }
@@ -757,22 +1092,38 @@ function runBacktest(
   horizon: WeightHorizon,
 ) {
   const config = getBacktestConfig(horizon);
+  const maxHoldDays = timeframe === "5m" ? 3 : timeframe === "15m" ? 4 : 5;
   const top = ranked.slice(0, 30);
   const returns: number[] = [];
   const estimatedReturns: number[] = [];
   let longestSeries = 0;
 
   for (const item of top) {
-    const entry = item.entryPrice;
-    const takeProfit = item.takeProfitPrice;
-    const stopLoss = item.stopLossPrice;
+    const candidate = candidateMap.get(item.code);
+    if (!candidate || candidate.candles.length < MIN_CANDLES_FOR_ANALYSIS) {
+      continue;
+    }
+
+    const stock = buildStockFromCandles(item.code, candidate.candles, candidate.meta, timeframe);
+    if (!stock) {
+      continue;
+    }
+
+    const analysis = analyzeStock({ query: item.code, stock }, { weights, learningProfile });
+    if (analysis.signal !== "BUY") {
+      continue;
+    }
+
+    const entry = analysis.entryPrice;
+    const takeProfit = analysis.takeProfitPrice;
+    const stopLoss = analysis.stopLossPrice;
     if (entry <= 0 || takeProfit <= entry || stopLoss <= 0 || stopLoss >= entry) {
       continue;
     }
 
     const gain = (takeProfit - entry) / entry;
     const loss = (entry - stopLoss) / entry;
-    const winRate = clamp(item.winRate / 100, 0, 1);
+    const winRate = clamp(analysis.winRate / 100, 0, 1);
     const simulatedTrades = 5;
     const wins = clamp(Math.round(winRate * simulatedTrades), 0, simulatedTrades);
     const losses = simulatedTrades - wins;
@@ -788,23 +1139,23 @@ function runBacktest(
 
   for (const item of top) {
     const candidate = candidateMap.get(item.code);
-    if (!candidate || candidate.candles.length < config.holdDays + 3) {
+    if (!candidate || candidate.candles.length < maxHoldDays + 3) {
       continue;
     }
 
     longestSeries = Math.max(longestSeries, candidate.candles.length);
 
     const windowSize = Math.max(3, Math.min(TARGET_CANDLE_DAYS, candidate.candles.length - 1));
-    const effectivePeriodDays = Math.min(config.periodDays, candidate.candles.length - config.holdDays - 1);
+    const effectivePeriodDays = Math.min(config.periodDays, candidate.candles.length - maxHoldDays - 1);
     if (effectivePeriodDays <= 1) {
       continue;
     }
 
     const minStart = Math.max(2, candidate.candles.length - effectivePeriodDays);
-    const maxStart = Math.max(2, candidate.candles.length - config.holdDays - 1);
+    const maxStart = Math.max(2, candidate.candles.length - maxHoldDays - 1);
     const start = Math.min(Math.max(windowSize, minStart), maxStart);
 
-    for (let index = start; index < candidate.candles.length - config.holdDays; index += config.step) {
+    for (let index = start; index < candidate.candles.length - maxHoldDays; index += config.step) {
       const sliceStart = Math.max(0, index - windowSize + 1);
       const window = candidate.candles.slice(sliceStart, index + 1);
       const stock = buildStockFromCandles(item.code, window, candidate.meta, timeframe);
@@ -814,16 +1165,34 @@ function runBacktest(
       }
 
       const analysis = analyzeStock({ query: item.code, stock }, { weights, learningProfile });
+      if (analysis.signal !== "BUY") {
+        continue;
+      }
+
       if (analysis.entryPrice <= 0 || analysis.takeProfitPrice <= 0 || analysis.stopLossPrice <= 0) {
         continue;
       }
+
+      const dynamicHoldDays = getDynamicHoldDays({
+        baseHoldDays: config.holdDays,
+        timeframe,
+        score: analysis.score,
+        confidence: analysis.confidence,
+        expectedValuePercent: analysis.expectedValuePercent,
+        probability5m: analysis.probability5m,
+        probability15m: analysis.probability15m,
+        probability1d: analysis.probability1d,
+        volatilityPercent: candidate.candles[index]?.close > 0
+          ? (((candidate.candles[index]?.high ?? 0) - (candidate.candles[index]?.low ?? 0)) / (candidate.candles[index]?.close ?? 1)) * 100
+          : 0,
+      });
 
       const tradeReturn = buildTradeReturn(
         candidate.candles,
         index,
         analysis.takeProfitPrice,
         analysis.stopLossPrice,
-        config.holdDays,
+        dynamicHoldDays,
       );
       if (tradeReturn === null) {
         continue;
@@ -833,9 +1202,8 @@ function runBacktest(
     }
   }
 
-  const effectivePeriod = Math.min(config.periodDays, Math.max(config.holdDays + 2, longestSeries));
-  const insufficientHistory = longestSeries < TARGET_CANDLE_DAYS;
-  if ((returns.length === 0 || insufficientHistory) && estimatedReturns.length > 0) {
+  const effectivePeriod = Math.min(config.periodDays, Math.max(maxHoldDays + 2, longestSeries));
+  if (returns.length === 0 && estimatedReturns.length > 0) {
     const fallbackPeriod = Math.min(config.periodDays, Math.max(5, estimatedReturns.length));
     return calculateBacktestMetrics(estimatedReturns, fallbackPeriod, 1);
   }
@@ -1188,15 +1556,41 @@ function registerLearningResult(
 }
 
 function backtestObjective(backtest: Tepou30BacktestMetrics) {
-  return backtest.winRate * 0.92
-    + backtest.expectedValuePercent * 1.35
-    + backtest.averageProfit * 0.24
-    - backtest.averageLoss * 0.42
-    + backtest.sharpeRatio * 4.8
-    + backtest.sortinoRatio * 5.1
-    + backtest.calmarRatio * 4.4
-    + backtest.profitFactor * 2.5
-    - backtest.maxDrawdown * 0.7;
+  const riskRewardRatio = backtest.averageLoss > 0
+    ? backtest.averageProfit / backtest.averageLoss
+    : backtest.averageProfit > 0 ? 3 : 0;
+  const expectancyComponent = clamp(backtest.expectedValuePercent * 14 + riskRewardRatio * 10 + 50, 0, 100);
+  const edgeComponent = clamp(
+    backtest.winRate * 0.7
+      + backtest.expectedValuePercent * 12
+      + backtest.profitFactor * 10
+      - backtest.maxDrawdown * 1.15
+      + 20,
+    0,
+    100,
+  );
+  const qualityComponent = clamp(
+    backtest.winRate * 0.45
+      + backtest.profitFactor * 9
+      + backtest.sharpeRatio * 7
+      + backtest.sortinoRatio * 7
+      + backtest.calmarRatio * 6,
+    0,
+    100,
+  );
+  const reliability = clamp(backtest.totalTrades / 18, 0.35, 1);
+  const lowTradePenalty = backtest.totalTrades < 8
+    ? (8 - backtest.totalTrades) * 2.4
+    : backtest.totalTrades < 12 ? (12 - backtest.totalTrades) * 1.2 : 0;
+
+  return (
+    expectancyComponent * 0.34
+    + edgeComponent * 0.28
+    + qualityComponent * 0.18
+    + backtest.averageProfit * 0.9
+    - backtest.averageLoss * 1.15
+    + backtest.averageReturn * 1.25
+  ) * reliability - lowTradePenalty;
 }
 
 async function persistStateLearningSnapshot(timeframe: StockTimeframe, state: Tepou30State) {
@@ -1586,7 +1980,8 @@ async function loadAnyBarsCache(): Promise<JpxBarRow[]> {
 
 async function fetchRecentDates() {
   const generated: string[] = [];
-  const cursor = new Date();
+  const subscriptionEndDate = new Date("2026-04-21T00:00:00.000Z");
+  const cursor = new Date(Math.min(Date.now(), subscriptionEndDate.getTime()));
 
   while (generated.length < MAX_DATE_CALLS) {
     const day = cursor.getDay();
@@ -1863,6 +2258,7 @@ async function buildTepou30(timeframe: StockTimeframe, sortMode: Tepou30SortMode
 
   const scored: Tepou30Item[] = [];
   const candidateByCode = new Map(finalScoringCandidates.map((candidate) => [candidate.code, candidate]));
+  const signalByCode = new Map<string, Tepou30SnapshotSignal>();
 
   for (const candidate of finalScoringCandidates) {
     const stock = buildStockFromCandles(
@@ -1878,6 +2274,7 @@ async function buildTepou30(timeframe: StockTimeframe, sortMode: Tepou30SortMode
     }
 
     const result = analyzeStock({ query: candidate.code, stock }, { weights: state.optimizedWeights, learningProfile: state.optimizedLearningProfile });
+    signalByCode.set(candidate.code, result.signal);
     const winRate = result.winRate;
     const latestClose = candidate.candles[candidate.candles.length - 1]?.close ?? result.entryPrice;
     const latestVolume = candidate.candles[candidate.candles.length - 1]?.volume ?? 0;
@@ -1999,6 +2396,7 @@ async function buildTepou30(timeframe: StockTimeframe, sortMode: Tepou30SortMode
         { weights: state.optimizedWeights, learningProfile: state.optimizedLearningProfile },
       );
 
+      signalByCode.set(item.code, rescored.signal);
       item.score = rescored.score;
       item.judgment = rescored.judgment;
       item.probability5m = rescored.probability5m;
@@ -2020,10 +2418,10 @@ async function buildTepou30(timeframe: StockTimeframe, sortMode: Tepou30SortMode
   }
 
   const calibratedScored = recalibrateUniverseScores(scored);
-  const ranked = rankTepou30Items(calibratedScored, sortMode).slice(0, 30);
+  const scoredRanked = rankTepou30Items(calibratedScored, sortMode);
+  const ranked = scoredRanked.slice(0, 30);
 
   if (calibratedScored.length > 0) {
-    const scoredRanked = rankTepou30Items(calibratedScored, sortMode);
     const scoredCandidateMap = new Map(finalScoringCandidates.map((candidate) => [candidate.code, candidate]));
     const refreshedBacktest = runBacktest(
       scoredRanked,
@@ -2062,6 +2460,16 @@ async function buildTepou30(timeframe: StockTimeframe, sortMode: Tepou30SortMode
   state.expiresAt = Date.now() + CACHE_TTL_MS;
   state.analyzed = candidates.length;
   finalizeReadyProgress(state);
+  await saveTop300Snapshot({
+    timeframe,
+    sortMode,
+    updatedAt: state.updatedAt,
+    items: scoredRanked,
+    signalByCode,
+    optimizedWeights: state.optimizedWeights,
+    optimizedLearningProfile: state.optimizedLearningProfile,
+    backtest: state.backtest ?? { ...EMPTY_BACKTEST },
+  });
   await saveCacheToDisk(timeframe, state);
 }
 
@@ -2173,5 +2581,37 @@ export async function getTepou30LearningProfile(timeframe: StockTimeframe) {
     weights: learning.bestWeights,
     learningProfile: learning.bestLearningProfile,
     backtest: learning.latestBacktest,
+  };
+}
+
+export async function compareTepou30Snapshots(params: {
+  timeframe: StockTimeframe;
+  sortMode?: Tepou30SortMode;
+  beforeFileName?: string;
+  afterFileName?: string;
+}) {
+  const { timeframe, sortMode = "ai-total", beforeFileName, afterFileName } = params;
+  const snapshotFiles = await listSnapshotFiles(timeframe, sortMode);
+  const resolvedAfter = afterFileName ?? snapshotFiles[0];
+  const resolvedBefore = beforeFileName ?? snapshotFiles[1];
+
+  if (!resolvedAfter || !resolvedBefore) {
+    throw new Error("比較対象のTop300 snapshotが不足しています。");
+  }
+
+  const beforeSnapshot = await readSnapshotPayload(resolvedBefore);
+  const afterSnapshot = await readSnapshotPayload(resolvedAfter);
+  const beforeSummary = buildCompleteSnapshotSummary(beforeSnapshot);
+  const afterSummary = buildCompleteSnapshotSummary(afterSnapshot);
+
+  return {
+    timeframe,
+    sortMode,
+    beforeFileName: resolvedBefore,
+    afterFileName: resolvedAfter,
+    beforeCreatedAt: beforeSnapshot.createdAt,
+    afterCreatedAt: afterSnapshot.createdAt,
+    summary: buildSnapshotSummaryDiff(beforeSummary, afterSummary),
+    items: buildSnapshotItemDiffs(beforeSnapshot.items, afterSnapshot.items),
   };
 }
