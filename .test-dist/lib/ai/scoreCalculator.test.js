@@ -81,6 +81,45 @@ function withNews(stock, score, confidence, summary, importance = "普通") {
     strict_1.default.equal(result.signal, "BUY");
     strict_1.default.ok(result.aiReason.some((reason) => reason.includes("直近高値")));
 });
+(0, node_test_1.default)("analyzeStock rewards aligned signals with a consensus bonus", () => {
+    const candles = Array.from({ length: 120 }, (_, index) => {
+        const base = 2200 + index * 22;
+        return {
+            time: `2025-04-${String((index % 30) + 1).padStart(2, "0")}`,
+            open: base,
+            high: base + 28,
+            low: base - 8,
+            close: base + 18,
+            volume: 1400000 + index * 45000,
+        };
+    });
+    candles[candles.length - 1] = {
+        ...candles[candles.length - 1],
+        close: 5100,
+        high: 5150,
+        volume: 6200000,
+    };
+    const result = (0, scoreCalculator_1.analyzeStock)({
+        query: "7203",
+        stock: {
+            ...buildStock(),
+            chartData: { candles },
+            marketData: {
+                price: 5100,
+                open: 5075,
+                high: 5150,
+                low: 5050,
+                previousClose: 4980,
+                change: 120,
+                changePercent: 2.41,
+                currency: "JPY",
+                asOf: null,
+            },
+        },
+    });
+    strict_1.default.ok(result.reasons.some((reason) => reason.includes("複数シグナル一致")));
+    strict_1.default.ok(result.aiReason.some((reason) => reason.includes("複数シグナル一致")));
+});
 (0, node_test_1.default)("analyzeStock lowers the score for a weak trend and low volume", () => {
     const candles = Array.from({ length: 40 }, (_, index) => {
         const base = 3200 - index * 10;

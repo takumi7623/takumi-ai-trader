@@ -90,6 +90,50 @@ test("analyzeStock rewards a breakout above the recent high", () => {
   assert.ok(result.aiReason.some((reason) => reason.includes("直近高値")));
 });
 
+test("analyzeStock rewards aligned signals with a consensus bonus", () => {
+  const candles = Array.from({ length: 120 }, (_, index) => {
+    const base = 2200 + index * 22;
+
+    return {
+      time: `2025-04-${String((index % 30) + 1).padStart(2, "0")}`,
+      open: base,
+      high: base + 28,
+      low: base - 8,
+      close: base + 18,
+      volume: 1400000 + index * 45000,
+    };
+  });
+
+  candles[candles.length - 1] = {
+    ...candles[candles.length - 1],
+    close: 5100,
+    high: 5150,
+    volume: 6200000,
+  };
+
+  const result = analyzeStock({
+    query: "7203",
+    stock: {
+      ...buildStock(),
+      chartData: { candles },
+      marketData: {
+        price: 5100,
+        open: 5075,
+        high: 5150,
+        low: 5050,
+        previousClose: 4980,
+        change: 120,
+        changePercent: 2.41,
+        currency: "JPY",
+        asOf: null,
+      },
+    },
+  });
+
+  assert.ok(result.reasons.some((reason) => reason.includes("複数シグナル一致")));
+  assert.ok(result.aiReason.some((reason) => reason.includes("複数シグナル一致")));
+});
+
 test("analyzeStock lowers the score for a weak trend and low volume", () => {
   const candles = Array.from({ length: 40 }, (_, index) => {
     const base = 3200 - index * 10;

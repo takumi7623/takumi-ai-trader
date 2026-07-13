@@ -377,6 +377,8 @@ function estimateReasonImpact(text: string) {
     [/ニュース重要度/, 9],
     [/5MAが25MAを上回|25MAが75MAを上回|移動平均線の傾き/, 8],
     [/MACDヒストグラム/, 8],
+    [/複数シグナル一致/, 8],
+    [/シグナル競合/, 7],
     [/レジスタンスラインを明確に突破/, 8],
     [/出来高が平均の/, 7],
     [/RSI\(14\)/, 6],
@@ -1258,6 +1260,20 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
         reasons.push(`適度な値動き（ATR ${atrPercent.toFixed(2)}%）です。`);
       }
     }
+
+    const signalVoteCount = bullishVotes + bearishVotes;
+    const consensusMargin = bullishVotes - bearishVotes;
+    const strongConsensus = signalVoteCount >= 6 && bullishVotes >= 5 && consensusMargin >= 2;
+    const mixedConflict = signalVoteCount >= 10 && bullishVotes >= 4 && bearishVotes >= 4 && Math.abs(bullishVotes - bearishVotes) <= 2;
+    if (strongConsensus) {
+      const consensusBonus = clamp(Math.round(consensusMargin * 0.8), 3, 8);
+      score += consensusBonus;
+      reasons.push(`複数シグナル一致（買い${bullishVotes}件・売り${bearishVotes}件）で追加加点しています。`);
+    } else if (mixedConflict) {
+      const conflictPenalty = clamp(Math.round((bearishVotes - bullishVotes) * 0.6) + 3, 3, 8);
+      score -= conflictPenalty;
+      reasons.push(`シグナル競合（買い${bullishVotes}件・売り${bearishVotes}件）でスコアを減衰しています。`);
+    }
   } else {
     const dayReturn = latest && latest.open > 0 ? ((latest.close - latest.open) / latest.open) * 100 : (stock.marketData?.changePercent ?? 0);
     const dayRange = latest && latest.close > 0 ? ((latest.high - latest.low) / latest.close) * 100 : 0;
@@ -1695,8 +1711,7 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
   if (weakDowntrendSetup) {
     calibratedFinalScore = Math.min(calibratedFinalScore, 55);
   }
-    const rankedReasons = rankReasons(reasons);
-
+  const rankedReasons = rankReasons(reasons);
   const summary = [
     `13項目評価（移動平均・MACD・RSI・出来高・ATR・ボラ・52週レンジ・日経・TOPIX・ドル円・ニュース・バックテスト等）によるAI評価は${Math.round(calibratedFinalScore)}点です。`,
     trendStack.dailyTrend || trendStack.weeklyTrend || trendStack.monthlyTrend
@@ -1734,14 +1749,6 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
       aiReasonLabels.push(volumeSpikeReason);
     }
   }
-  const comboReason = reasons.find((reason) => reason.includes("複数シグナル一致"));
-  if (comboReason && !aiReasonLabels.some((reason) => reason.includes("複数シグナル一致"))) {
-    if (aiReasonLabels.length >= 6) {
-      aiReasonLabels[aiReasonLabels.length - 1] = comboReason;
-    } else {
-      aiReasonLabels.push(comboReason);
-    }
-  }
   const conflictReason = reasons.find((reason) => reason.includes("シグナル競合"));
   if (conflictReason && !aiReasonLabels.some((reason) => reason.includes("シグナル競合"))) {
     if (aiReasonLabels.length >= 6) {
@@ -1758,7 +1765,27 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
       aiReasonLabels.push(bollingerReason);
     }
   }
+  const consensusReason = reasons.find((reason) => reason.includes("シグナル一致"));
+  if (consensusReason && !aiReasonLabels.some((reason) => reason.includes("シグナル一致"))) {
+    if (aiReasonLabels.length >= 6) {
+      let replaceIndex = aiReasonLabels.length - 1;
+      for (let index = aiReasonLabels.length - 1; index >= 0; index -= 1) {
+        if (!aiReasonLabels[index].includes("直近高値")) {
+          replaceIndex = index;
+          break;
+        }
+      }
+      aiReasonLabels[replaceIndex] = consensusReason;
+    } else {
+      aiReasonLabels.push(consensusReason);
+    }
+  }
+
   const aiReason = aiReasonLabels.slice(0, 6).map((reason) => `• ${reason}`);
+  const consensusReasonForAi = reasons.find((reason) => reason.includes("複数シグナル一致"));
+  if (consensusReasonForAi && !aiReason.some((reason) => reason.includes("複数シグナル一致"))) {
+    aiReason.push(`• ${consensusReasonForAi}`);
+  }
   const roundedScore = Math.round(calibratedFinalScore);
   const signal = decideSignalEnhanced({
     score: roundedScore,
