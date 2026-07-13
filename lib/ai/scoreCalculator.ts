@@ -998,11 +998,9 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
     trendStack = buildTrendStack(closes, latestClose);
     trendAssessment = buildTrendAssessment(trendStack);
     if (trendAssessment.totalScore > 0) {
-      score += trendAssessment.totalScore;
       bullishVotes += 1;
       reasons.push(`日足は${trendAssessment.daily.direction}（${trendAssessment.daily.value.toFixed(2)}%）、週足は${trendAssessment.weekly.direction}（${trendAssessment.weekly.value.toFixed(2)}%）、月足は${trendAssessment.monthly.direction}（${trendAssessment.monthly.value.toFixed(2)}%）で、総合トレンドは${trendAssessment.direction}です。`);
     } else if (trendAssessment.totalScore < 0) {
-      score += trendAssessment.totalScore;
       bearishVotes += 1;
       reasons.push(`日足は${trendAssessment.daily.direction}（${trendAssessment.daily.value.toFixed(2)}%）、週足は${trendAssessment.weekly.direction}（${trendAssessment.weekly.value.toFixed(2)}%）、月足は${trendAssessment.monthly.direction}（${trendAssessment.monthly.value.toFixed(2)}%）で、総合トレンドは${trendAssessment.direction}です。`);
     } else {
@@ -1022,30 +1020,24 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
     }
 
     if (latestClose > latestSma5) {
-      score += 8;
       bullishVotes += 1;
       reasons.push("株価が5MAを上回っており、短期トレンドは上向きです。");
     } else {
-      score -= 7;
       bearishVotes += 1;
       reasons.push("株価が5MAを下回っており、短期の勢いは弱いです。");
     }
 
     if (latestSma5 > latestSma25) {
-      score += 9;
       bullishVotes += 1;
       reasons.push("5MAが25MAを上回っており、短中期の基調は上向きです。");
     } else {
-      score -= 5;
       bearishVotes += 1;
     }
 
     if (latestSma25 > latestSma75) {
-      score += 8;
       bullishVotes += 1;
       reasons.push("25MAが75MAを上回っており、中長期トレンドも改善しています。");
     } else {
-      score -= 6;
       bearishVotes += 1;
     }
 
@@ -1091,58 +1083,67 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
     }
 
     if (momentumPersistence >= 0.45) {
-      score += 5;
       bullishVotes += 1;
       reasons.push("短中期モメンタムの加速が確認でき、上昇継続シナリオが優勢です。");
     } else if (momentumPersistence <= -0.45) {
-      score -= 5;
       bearishVotes += 1;
       reasons.push("短期モメンタムが鈍化しており、反落リスクに注意が必要です。");
     }
 
     if (momentumConsistency >= 0.55) {
-      score += 4;
       bullishVotes += 1;
     } else if (momentumConsistency <= -0.45) {
-      score -= 4;
       bearishVotes += 1;
     }
 
     if (trendAlignment >= 3) {
-      score += 7;
       bullishVotes += 1;
       reasons.push("短期・中期・長期トレンドが同方向で、上昇シグナルの整合性が高いです。");
     } else if (trendAlignment <= -3) {
-      score -= 7;
       bearishVotes += 1;
       reasons.push("短期・中期・長期トレンドが下向きで、戻り売り優位の地合いです。");
     }
 
     if (maSlopeBlend >= 0.55) {
-      score += 6;
       bullishVotes += 1;
       reasons.push("移動平均線の傾きが上向きで、トレンドの持続性が確認できます。");
     } else if (maSlopeBlend <= -0.45) {
-      score -= 6;
       bearishVotes += 1;
       reasons.push("移動平均線の傾きが下向きで、反発より戻り売りが優勢です。");
     }
 
     if (trendStack.alignment >= 3) {
-      score += 6;
       bullishVotes += 1;
       reasons.push("日足・週足・月足のトレンドが揃っており、中期の追随に向いています。");
     } else if (trendStack.alignment <= -3) {
-      score -= 6;
       bearishVotes += 1;
       reasons.push("日足・週足・月足のトレンドが下向きで、逆張りは慎重判断です。");
     }
 
     if (trendStack.strength >= 12 && trendStack.dailyTrend > 0) {
-      score += 4;
       bullishVotes += 1;
       reasons.push("上位足のトレンド強度が高く、押し目買いの継続性があります。\n");
     }
+
+    const trendDirectionScore = clamp(trendAssessment.totalScore, -16, 16);
+    const maStructureScore =
+      (latestClose > latestSma5 ? 8 : -7)
+      + (latestSma5 > latestSma25 ? 9 : -5)
+      + (latestSma25 > latestSma75 ? 8 : -6);
+    const trendMomentumScore =
+      (momentumPersistence >= 0.45 ? 5 : momentumPersistence <= -0.45 ? -5 : 0)
+      + (momentumConsistency >= 0.55 ? 4 : momentumConsistency <= -0.45 ? -4 : 0)
+      + (trendAlignment >= 3 ? 7 : trendAlignment <= -3 ? -7 : 0)
+      + (maSlopeBlend >= 0.55 ? 6 : maSlopeBlend <= -0.45 ? -6 : 0)
+      + (trendStack.alignment >= 3 ? 6 : trendStack.alignment <= -3 ? -6 : 0)
+      + (trendStack.strength >= 12 && trendStack.dailyTrend > 0 ? 4 : 0);
+    const trendCompositeScore = clamp(
+      Math.round((trendDirectionScore + maStructureScore + trendMomentumScore) * 0.7),
+      -45,
+      45,
+    );
+    score += trendCompositeScore;
+    reasons.push(`トレンド総合スコアは${trendCompositeScore}で、価格・移動平均・方向性を統合評価しています。`);
 
     if (latestAdx > 25) {
       score += 3;
