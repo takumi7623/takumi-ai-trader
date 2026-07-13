@@ -1438,14 +1438,7 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
     regimeAdjustment -= 3;
   }
 
-  if (newsSentimentScore >= 18 && newsSentimentConfidence >= 60) {
-    regimeAdjustment += 2;
-  } else if (newsSentimentScore <= -18 && newsSentimentConfidence >= 60) {
-    regimeAdjustment -= 2;
-  }
-
   const downsidePenalty = lossRiskPercent >= 7 ? 11 : lossRiskPercent >= 6 ? 8 : lossRiskPercent >= 5 ? 5 : 0;
-  const newsRegimeBias = newsSentimentScore >= 15 && newsSentimentConfidence >= 60 ? 4 : newsSentimentScore <= -15 && newsSentimentConfidence >= 60 ? -4 : 0;
   const technicalWeighted = (
     rsiScore * weights.rsi
     + macdScore * weights.macd
@@ -1475,8 +1468,13 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
     + weights.trendStrength
     + weights.lossRisk
   );
-  const newsAdjustmentBase = clamp((newsSentimentScore / 100) * (newsSentimentConfidence / 100) * 12, -10, 10) + newsRegimeBias + newsImpact.score;
-  const newsAdjustment = newsAdjustmentBase * learningProfile.newsWeight;
+  const newsSentimentScaled = clamp((newsSentimentScore / 100) * (newsSentimentConfidence / 100) * 14, -12, 12);
+  const newsComponentDelta = (newsComponentScore - 50) * 0.18;
+  const newsCompositeScore = clamp(
+    (newsSentimentScaled + newsComponentDelta + newsImpact.score) * learningProfile.newsWeight,
+    -16,
+    24,
+  );
   const tradeFactor = adaptiveTradeFactor({
     timeframe: stock.timeframe,
     trendAlignment,
@@ -1509,10 +1507,10 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
 
   const technicalBlend = clamp(0.6 * learningProfile.technicalWeight, 0.4, 0.78);
   const baseBlend = clamp(0.34 * learningProfile.technicalWeight, 0.2, 0.45);
-  const adjustedScore = clamp(
+  const adjustedRawScore =
     baseScore * baseBlend
       + technicalWeighted * technicalBlend
-      + newsAdjustment
+      + newsCompositeScore * 1.7
       - riskPenalty
       - downsidePenalty
       + rewardBonus
@@ -1521,7 +1519,9 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
       + consistencyBonus
       + horizonBonus
       + regimeAdjustment
-      + Math.max(voteBias, -3),
+      + Math.max(voteBias, -3);
+  const adjustedScore = clamp(
+    adjustedRawScore,
     0,
     100,
   );
@@ -1541,10 +1541,8 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
       + topixScore * 0.03
       + usdJpyScore * 0.03
       + vixScore * 0.03
-      + newsComponentScore * 0.06
       + supportResistanceScore * 0.06
     )
-      + newsAdjustment * 0.35
       + rewardBonus
       + rrBonus
       + regimeAdjustment
@@ -1559,11 +1557,20 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
   const backtestBlend = 0.5 + backtestReliability * 0.35;
   const productionBlend = 0.3 - backtestReliability * 0.12;
   const adjustedBlend = 1 - backtestBlend - productionBlend;
+  const adjustedClampOverflow = Math.max(0, adjustedRawScore - 100);
+  const adjustedClampUnderflow = Math.max(0, 0 - adjustedRawScore);
+  const positiveNewsCarry = newsCompositeScore > 0
+    ? Math.min(newsCompositeScore * 1.7, adjustedClampOverflow)
+    : 0;
+  const negativeNewsCarry = newsCompositeScore < 0
+    ? Math.min(Math.abs(newsCompositeScore * 1.7), adjustedClampUnderflow)
+    : 0;
+  const newsClampCarry = positiveNewsCarry - negativeNewsCarry;
   const blendedRawScore = (
     productionAiScore * productionBlend
     + adjustedScore * adjustedBlend
     + backtestScore * backtestBlend
-  );
+  ) + (newsClampCarry * adjustedBlend);
   // Shrink extreme tails so score behavior is more consistent across the full universe.
   const stabilizedScore = 50 + (blendedRawScore - 50) * 1.02 + (marketRegimeScore - 50) * 0.14;
   const bearishFloor = voteBias <= -5 || (lossRiskPercent >= 6 && backtestExpectedRaw <= 0) ? 28 : 34;
