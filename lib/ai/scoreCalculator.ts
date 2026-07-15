@@ -2096,7 +2096,7 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
 
   const backtestReliability = clamp(oneYearBacktest.totalTrades / 80, 0, 1);
   const backtestBlend = 0.5 + backtestReliability * 0.35;
-  const productionBlend = 0.3 - backtestReliability * 0.12;
+  const productionBlend = 0.3 - backtestReliability * 0.1;
   const adjustedBlend = clamp(1 - backtestBlend - productionBlend, 0, 1);
   const blendOverflow = Math.max(0, backtestBlend + productionBlend + adjustedBlend - 1);
   const normalizedBacktestBlend = clamp(backtestBlend - blendOverflow, 0, 1);
