@@ -81,6 +81,21 @@ function withNews(
   };
 }
 
+function buildTrendingStock(candles: NonNullable<Stock["chartData"]>["candles"], marketData: NonNullable<Stock["marketData"]>): Stock {
+  return {
+    code: "7203",
+    name: "トヨタ自動車",
+    sector: "自動車",
+    baselineTrend: "up",
+    description: "テスト用のサンプルデータ",
+    marketData,
+    chartData: { candles },
+    dataStatus: "real",
+    dataReason: null,
+    timeframe: "1d",
+  };
+}
+
 test("analyzeStock rewards a breakout above the recent high", () => {
   const result = analyzeStock({ query: "7203", stock: buildStock() });
 
@@ -304,4 +319,129 @@ test("analyzeStock explains multi-timeframe bearish trend direction", () => {
   });
 
   assert.ok(result.aiReason.some((reason) => reason.includes("総合トレンドは下降")));
+});
+
+test("analyzeStock explains v1.4 bullish candlestick and 200-day alignment", () => {
+  const candles = Array.from({ length: 220 }, (_, index) => {
+    const base = 1800 + index * 6;
+    return {
+      time: `2025-05-${String((index % 30) + 1).padStart(2, "0")}`,
+      open: base,
+      high: base + 18,
+      low: base - 12,
+      close: base + 9,
+      volume: 1400000 + index * 12000,
+    };
+  });
+
+  candles[candles.length - 2] = {
+    ...candles[candles.length - 2],
+    open: 3180,
+    high: 3195,
+    low: 3060,
+    close: 3070,
+    volume: 1800000,
+  };
+
+  candles[candles.length - 1] = {
+    ...candles[candles.length - 1],
+    open: 3065,
+    high: 3215,
+    low: 3055,
+    close: 3205,
+    volume: 4200000,
+  };
+
+  const result = analyzeStock({
+    query: "7203",
+    stock: buildTrendingStock(candles, {
+      price: 3205,
+      open: 3065,
+      high: 3215,
+      low: 3055,
+      previousClose: 3070,
+      change: 135,
+      changePercent: 4.39,
+      currency: "JPY",
+      asOf: null,
+    }),
+  });
+
+  assert.ok(result.reasons.some((reason) => reason.includes("Bullish Engulfing") || reason.includes("Hammer") || reason.includes("Morning Star")));
+  assert.ok(result.aiReason.some((reason) => reason.includes("200日線") || reason.includes("5/25/75/200日トレンド整合性")));
+});
+
+test("analyzeStock explains v1.4 bearish divergence and false breakout", () => {
+  const candles = Array.from({ length: 60 }, (_, index) => {
+    const base = 2400 - index * 8;
+    return {
+      time: `2025-06-${String((index % 30) + 1).padStart(2, "0")}`,
+      open: base,
+      high: base + 14,
+      low: base - 16,
+      close: base - 6,
+      volume: 2200000 - index * 15000,
+    };
+  });
+
+  for (let index = 20; index < 34; index += 1) {
+    const base = 2060 + (index - 20) * 18;
+    candles[index] = {
+      ...candles[index],
+      open: base,
+      high: base + 26,
+      low: base - 10,
+      close: base + 14,
+      volume: 2600000 + (index - 20) * 40000,
+    };
+  }
+
+  candles[candles.length - 2] = {
+    ...candles[candles.length - 2],
+    open: 2120,
+    high: 2210,
+    low: 2110,
+    close: 2195,
+    volume: 2100000,
+  };
+
+  candles[candles.length - 1] = {
+    ...candles[candles.length - 1],
+    open: 2200,
+    high: 2225,
+    low: 2135,
+    close: 2145,
+    volume: 100000,
+  };
+
+  const result = analyzeStock({
+    query: "9432",
+    stock: {
+      code: "9432",
+      name: "NTT",
+      sector: "通信",
+      baselineTrend: "volatile",
+      description: "テスト用のサンプルデータ",
+      marketData: {
+        price: 2145,
+        open: 2200,
+        high: 2225,
+        low: 2135,
+        previousClose: 2195,
+        change: -50,
+        changePercent: -2.28,
+        currency: "JPY",
+        asOf: null,
+      },
+      chartData: {
+        candles,
+      },
+      dataStatus: "real",
+      dataReason: null,
+      timeframe: "1d",
+    },
+  });
+
+  assert.ok(result.reasons.some((reason) => reason.includes("出来高減少による減点") || reason.includes("参加者が減っています")));
+  assert.ok(result.aiReason.some((reason) => reason.includes("Trend整合") || reason.includes("200日線")));
 });

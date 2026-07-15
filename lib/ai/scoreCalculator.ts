@@ -363,6 +363,151 @@ function buildVolumeProfile(candles: Stock["chartData"] extends infer T ? T exte
   return { score: 0, reason: "", bullish: false, bearish: false, surgeRatio, trendPercent };
 }
 
+function buildDivergenceSignals(
+  candles: Stock["chartData"] extends infer T ? T extends { candles: infer C } ? C extends Array<infer Candle> ? Candle[] : never : never : never,
+  rsiSeries: Array<{ value: number }>,
+  macdSeries: Array<{ histogram: number }>,
+) {
+  const reasons: string[] = [];
+  let score = 0;
+  let bullishVotes = 0;
+  let bearishVotes = 0;
+
+  if (candles.length < 14 || rsiSeries.length < 14 || macdSeries.length < 14) {
+    return { score, reasons, bullishVotes, bearishVotes };
+  }
+
+  const swingWindow = Math.min(14, Math.max(6, Math.floor(candles.length / 5)));
+  const recentStart = Math.max(0, candles.length - swingWindow);
+  const previousStart = Math.max(0, recentStart - swingWindow);
+  const recent = candles.slice(recentStart);
+  const previous = candles.slice(previousStart, recentStart);
+
+  if (recent.length < 4 || previous.length < 4) {
+    return { score, reasons, bullishVotes, bearishVotes };
+  }
+
+  const recentLowIndex = recent.reduce((lowest, candle, index, array) => (candle.low < array[lowest].low ? index : lowest), 0);
+  const previousLowIndex = previous.reduce((lowest, candle, index, array) => (candle.low < array[lowest].low ? index : lowest), 0);
+  const recentHighIndex = recent.reduce((highest, candle, index, array) => (candle.high > array[highest].high ? index : highest), 0);
+  const previousHighIndex = previous.reduce((highest, candle, index, array) => (candle.high > array[highest].high ? index : highest), 0);
+
+  const recentLow = recent[recentLowIndex];
+  const previousLow = previous[previousLowIndex];
+  const recentHigh = recent[recentHighIndex];
+  const previousHigh = previous[previousHighIndex];
+
+  const recentLowOscIndex = recentStart + recentLowIndex;
+  const previousLowOscIndex = previousStart + previousLowIndex;
+  const recentHighOscIndex = recentStart + recentHighIndex;
+  const previousHighOscIndex = previousStart + previousHighIndex;
+
+  const recentRsiLow = rsiSeries[recentLowOscIndex]?.value ?? 50;
+  const previousRsiLow = rsiSeries[previousLowOscIndex]?.value ?? 50;
+  const recentRsiHigh = rsiSeries[recentHighOscIndex]?.value ?? 50;
+  const previousRsiHigh = rsiSeries[previousHighOscIndex]?.value ?? 50;
+  const recentMacdLow = macdSeries[recentLowOscIndex]?.histogram ?? 0;
+  const previousMacdLow = macdSeries[previousLowOscIndex]?.histogram ?? 0;
+  const recentMacdHigh = macdSeries[recentHighOscIndex]?.histogram ?? 0;
+  const previousMacdHigh = macdSeries[previousHighOscIndex]?.histogram ?? 0;
+
+  if (recentLow.low < previousLow.low * 0.995 && recentRsiLow > previousRsiLow + 2.5) {
+    score += 6;
+    bullishVotes += 1;
+    reasons.push(`RSI Bullish Divergence: 価格は安値更新ですが、RSIは${previousRsiLow.toFixed(1)}→${recentRsiLow.toFixed(1)}で切り上がっています。`);
+  }
+
+  if (recentHigh.high > previousHigh.high * 1.005 && recentRsiHigh < previousRsiHigh - 2.5) {
+    score -= 6;
+    bearishVotes += 1;
+    reasons.push(`RSI Bearish Divergence: 価格は高値更新ですが、RSIは${previousRsiHigh.toFixed(1)}→${recentRsiHigh.toFixed(1)}で切り下がっています。`);
+  }
+
+  if (recentLow.low < previousLow.low * 0.995 && recentMacdLow > previousMacdLow + Math.max(Math.abs(previousMacdLow) * 0.2, 0.02)) {
+    score += 5;
+    bullishVotes += 1;
+    reasons.push(`MACD Bullish Divergence: 安値更新に対してMACDヒストグラムが${previousMacdLow.toFixed(2)}→${recentMacdLow.toFixed(2)}で改善しています。`);
+  }
+
+  if (recentHigh.high > previousHigh.high * 1.005 && recentMacdHigh < previousMacdHigh - Math.max(Math.abs(previousMacdHigh) * 0.2, 0.02)) {
+    score -= 5;
+    bearishVotes += 1;
+    reasons.push(`MACD Bearish Divergence: 高値更新に対してMACDヒストグラムが${previousMacdHigh.toFixed(2)}→${recentMacdHigh.toFixed(2)}で悪化しています。`);
+  }
+
+  return { score, reasons, bullishVotes, bearishVotes };
+}
+
+function buildCandlestickPatternSignals(candles: Stock["chartData"] extends infer T ? T extends { candles: infer C } ? C extends Array<infer Candle> ? Candle[] : never : never : never) {
+  const reasons: string[] = [];
+  let score = 0;
+  let bullishVotes = 0;
+  let bearishVotes = 0;
+
+  if (candles.length < 3) {
+    return { score, reasons, bullishVotes, bearishVotes };
+  }
+
+  const latest = candles[candles.length - 1];
+  const previous = candles[candles.length - 2];
+  const beforePrevious = candles[candles.length - 3];
+  const latestBody = Math.abs(latest.close - latest.open);
+  const previousBody = Math.abs(previous.close - previous.open);
+  const beforePreviousBody = Math.abs(beforePrevious.close - beforePrevious.open);
+  const latestRange = Math.max(latest.high - latest.low, 1e-6);
+  const previousRange = Math.max(previous.high - previous.low, 1e-6);
+  const beforePreviousRange = Math.max(beforePrevious.high - beforePrevious.low, 1e-6);
+  const latestUpperShadow = latest.high - Math.max(latest.open, latest.close);
+  const latestLowerShadow = Math.min(latest.open, latest.close) - latest.low;
+  const latestBullish = latest.close >= latest.open;
+  const previousBullish = previous.close >= previous.open;
+  const beforePreviousBullish = beforePrevious.close >= beforePrevious.open;
+
+  const bullishEngulfing = !previousBullish && latestBullish && latest.open <= previous.close && latest.close >= previous.open && latestBody >= previousBody * 0.8;
+  const bearishEngulfing = previousBullish && !latestBullish && latest.open >= previous.close && latest.close <= previous.open && latestBody >= previousBody * 0.8;
+  const hammer = latestBullish && latestLowerShadow >= Math.max(latestBody * 2, latestRange * 0.4) && latestUpperShadow <= Math.max(latestBody * 0.6, latestRange * 0.18);
+  const shootingStar = !latestBullish && latestUpperShadow >= Math.max(latestBody * 2, latestRange * 0.4) && latestLowerShadow <= Math.max(latestBody * 0.6, latestRange * 0.18);
+  const doji = latestBody <= latestRange * 0.12;
+  const morningStar = !beforePreviousBullish && beforePreviousBody <= beforePreviousRange * 0.45 && latestBullish && latest.close >= (beforePrevious.open + beforePrevious.close) / 2;
+  const eveningStar = beforePreviousBullish && beforePreviousBody <= beforePreviousRange * 0.45 && !latestBullish && latest.close <= (beforePrevious.open + beforePrevious.close) / 2;
+
+  if (bullishEngulfing) {
+    score += 7;
+    bullishVotes += 1;
+    reasons.push("Bullish Engulfing: 前足の陰線を包み込んでおり、反発初動として評価します。");
+  }
+  if (bearishEngulfing) {
+    score -= 7;
+    bearishVotes += 1;
+    reasons.push("Bearish Engulfing: 前足の陽線を包み込み、戻り売りの可能性が高いです。");
+  }
+  if (hammer) {
+    score += 5;
+    bullishVotes += 1;
+    reasons.push("Hammer: 下ヒゲが長く、押し目からの買い戻しを示唆します。");
+  }
+  if (shootingStar) {
+    score -= 5;
+    bearishVotes += 1;
+    reasons.push("Shooting Star: 上ヒゲが長く、上値の失速を示唆します。");
+  }
+  if (morningStar) {
+    score += 8;
+    bullishVotes += 1;
+    reasons.push("Morning Star: 下落後の切り返しパターンで、反転確度を上げます。");
+  }
+  if (eveningStar) {
+    score -= 8;
+    bearishVotes += 1;
+    reasons.push("Evening Star: 上昇後の失速パターンで、反落警戒を強めます。");
+  }
+  if (doji) {
+    reasons.push("Doji: 迷いの強い足型で、方向感が弱い状態です。");
+  }
+
+  return { score, reasons, bullishVotes, bearishVotes };
+}
+
 function classifyReason(text: string) {
   if (/下回|下落|弱い|売り|過熱|高すぎ|反落|鈍化|注意|マイナス|荒い|割れ|戻り売り|方向感の弱|リスク/.test(text)) {
     return -1;
@@ -373,6 +518,11 @@ function classifyReason(text: string) {
 
 function estimateReasonImpact(text: string) {
   const patterns: Array<[RegExp, number]> = [
+    [/RSI Bullish Divergence|RSI Bearish Divergence|MACD Bullish Divergence|MACD Bearish Divergence/, 10],
+    [/Bullish Engulfing|Bearish Engulfing|Hammer|Shooting Star|Morning Star|Evening Star|Doji/, 9],
+    [/5\/25\/75\/200日トレンド整合性|Trend整合性|200日線/, 9],
+    [/Volume Spike Score|出来高急増率|出来高減少補正/, 8],
+    [/52週高値|ボックス上抜け|ダマシブレイク/, 8],
     [/v1\.3 Trend|Trend 30点|パーフェクトオーダー|長期上昇トレンド/, 9],
     [/v1\.3 Momentum|Momentum 20点|モメンタム強度|MACDヒストグラム|RSI/, 8],
     [/v1\.3 Volume|Volume 20点|5日平均出来高比|出来高急増|ブレイクアウト時の出来高/, 8],
@@ -962,6 +1112,7 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
   let latestSma5 = latestClose;
   let latestSma25 = latestClose;
   let latestSma75 = latestClose;
+  let latestSma200 = latestClose;
   let latestAdx = 0;
   let latestMacdHistogram = 0;
   let macdHistogramDelta = 0;
@@ -994,6 +1145,7 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
     const sma5 = calculateSma(candles, 5);
     const sma25 = calculateSma(candles, 25);
     const sma75 = calculateSma(candles, 75);
+    const sma200 = calculateSma(candles, 200);
     const rsiSeries = calculateRsi(candles, 14);
     const macdSeries = calculateMacd(candles);
     const volumeAverage = calculateVolumeAverage(candles, 20);
@@ -1006,6 +1158,7 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
     latestSma5 = sma5[sma5.length - 1]?.value ?? latest?.close ?? 0;
     latestSma25 = sma25[sma25.length - 1]?.value ?? latest?.close ?? 0;
     latestSma75 = sma75[sma75.length - 1]?.value ?? latest?.close ?? 0;
+    latestSma200 = sma200[sma200.length - 1]?.value ?? latest?.close ?? 0;
     const ma5Values = sma5.map((point) => point.value);
     const ma25Values = sma25.map((point) => point.value);
     const ma75Values = sma75.map((point) => point.value);
@@ -1480,6 +1633,69 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
     reasons.push(`【v1.3 Risk 10点】ATR ${atrPercent.toFixed(2)}% / 実現ボラ ${realizedVolatilityLocal.toFixed(2)}% / ボラティリティ過熱 ${riskOverheat ? "あり" : "なし"} / 評価${Math.round(riskV13Score * 0.1)}点`);
 
     score = v13CompositeScore;
+    const divergenceSignals = buildDivergenceSignals(candles, rsiSeries, macdSeries);
+    const candlestickSignals = buildCandlestickPatternSignals(candles);
+    const trend200Direction = latestClose > latestSma200 ? 1 : latestClose < latestSma200 ? -1 : 0;
+    const trendMultiFrameScore = clamp(
+      Math.round(
+        50
+          + (latestClose > latestSma5 ? 8 : -8)
+          + (latestClose > latestSma25 ? 7 : -7)
+          + (latestClose > latestSma75 ? 6 : -6)
+          + (latestClose > latestSma200 ? 10 : -10)
+          + (latestSma5 > latestSma25 ? 5 : -5)
+          + (latestSma25 > latestSma75 ? 5 : -5)
+          + (latestSma75 > latestSma200 ? 6 : -6)
+          + clamp(trendStack.alignment * 2.5, -8, 8),
+      ),
+      0,
+      100,
+    );
+    const volumeDeclinePenalty = volumeProfile.trendPercent <= -12 || volumeSurgeRate <= 0.9 ? -6 : 0;
+    const volumeSpikeScore = clamp(
+      Math.round(
+        volumeSurgeRate >= 2.4 ? 14
+          : volumeSurgeRate >= 1.8 ? 10
+          : volumeSurgeRate >= 1.3 ? 6
+          : volumeSurgeRate <= 0.85 ? -6
+          : 0,
+      ),
+      -10,
+      14,
+    );
+    const falseBreakout = latest?.high ? latest.high >= recent20High * 1.005 && latestClose < recent20High * 0.998 && volumeSurgeRate < 1.15 : false;
+    const boxBreakout = candles.length >= 20 && latest?.high ? latest.high >= recent20High * 1.005 && latestClose >= recent20High * 0.998 : false;
+    const breakoutPrecisionScore = clamp(
+      (week52Breakout ? 8 : 0)
+      + (boxBreakout ? 7 : 0)
+      + (falseBreakout ? -10 : 0)
+      + (highBreakout && !falseBreakout ? 6 : 0)
+      + (nearResistance ? -3 : 0),
+      -12,
+      16,
+    );
+    const v14CompositeDelta = clamp(
+      divergenceSignals.score
+      + candlestickSignals.score
+      + Math.round((trendMultiFrameScore - 50) * 0.12)
+      + volumeSpikeScore
+      + volumeDeclinePenalty
+      + breakoutPrecisionScore,
+      -22,
+      22,
+    );
+    score = clamp(score + v14CompositeDelta, 0, 100);
+    reasons.push(`【v1.4 Trend整合】5/25/75/200日トレンド整合性は${trendMultiFrameScore}点で、200日線は${trend200Direction > 0 ? "上向き" : trend200Direction < 0 ? "下向き" : "横ばい"}です。`);
+    reasons.push(`【v1.4 Divergence】${divergenceSignals.reasons.join(" / ") || "明確な乖離は検出されていません。"}`);
+    reasons.push(`【v1.4 Candlestick】${candlestickSignals.reasons.join(" / ") || "明確なローソク足パターンは検出されていません。"}`);
+    reasons.push(`【v1.4 Volume】出来高急増率${volumeSurgeRate.toFixed(2)}倍、Volume Spike Score ${volumeSpikeScore}点、出来高減少補正${volumeDeclinePenalty}点です。`);
+    if (volumeDeclinePenalty < 0) {
+      reasons.push("出来高減少による減点を行い、ブレイクの信頼性を下げています。");
+    }
+    reasons.push(`【v1.4 Breakout】52週高値 ${week52Breakout ? "更新" : "未更新"}、ボックス上抜け ${boxBreakout ? "成立" : "未成立"}、ダマシブレイク ${falseBreakout ? "疑いあり" : "なし"} です。`);
+    if (falseBreakout) {
+      reasons.push("ダマシブレイク候補: 高値は切り上がったものの、終値が押し戻されており失敗ブレイクの可能性があります。");
+    }
   } else {
     const dayReturn = latest && latest.open > 0 ? ((latest.close - latest.open) / latest.open) * 100 : (stock.marketData?.changePercent ?? 0);
     const dayRange = latest && latest.close > 0 ? ((latest.high - latest.low) / latest.close) * 100 : 0;
@@ -2056,7 +2272,7 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
   }
   const rankedReasons = rankReasons(reasons);
   const summary = [
-    `v1.3評価（Trend 30点 / Momentum 20点 / Volume 20点 / Price Action 20点 / Risk 10点）によるAI評価は${Math.round(calibratedFinalScore)}点です。`,
+    `v1.4評価（Trend整合 / Divergence / Candlestick / Volume / Breakout）によるAI評価は${Math.round(calibratedFinalScore)}点です。`,
     trendStack.dailyTrend || trendStack.weeklyTrend || trendStack.monthlyTrend
       ? `日足/週足/月足は${trendStack.dailyTrend.toFixed(2)}% / ${trendStack.weeklyTrend.toFixed(2)}% / ${trendStack.monthlyTrend.toFixed(2)}%で、総合トレンドは${trendAssessment.direction}です。`
       : "",
@@ -2064,6 +2280,46 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
     `損失リスクは${lossRiskPercent}%、1日期待値は${expectedValuePercent}%、リスク水準は${riskLevel}、報酬水準は${rewardLevel}、エントリー優先度は${entryPriority.toFixed(1)}です。トレンド強度は${trendStrength}です。`,
   ].join(" ");
     const aiReasonLabels = rankedReasons.slice(0, 6).map((reason) => reason.label);
+  const divergenceReason = reasons.find((reason) => reason.includes("Divergence"));
+  if (divergenceReason && !aiReasonLabels.some((reason) => reason.includes("Divergence"))) {
+    if (aiReasonLabels.length >= 6) {
+      aiReasonLabels[5] = divergenceReason;
+    } else {
+      aiReasonLabels.push(divergenceReason);
+    }
+  }
+  const candlestickReason = reasons.find((reason) => reason.includes("Engulfing") || reason.includes("Hammer") || reason.includes("Shooting Star") || reason.includes("Morning Star") || reason.includes("Evening Star") || reason.includes("Doji"));
+  if (candlestickReason && !aiReasonLabels.some((reason) => reason.includes("Engulfing") || reason.includes("Hammer") || reason.includes("Shooting Star") || reason.includes("Morning Star") || reason.includes("Evening Star") || reason.includes("Doji"))) {
+    if (aiReasonLabels.length >= 6) {
+      aiReasonLabels[aiReasonLabels.length - 1] = candlestickReason;
+    } else {
+      aiReasonLabels.push(candlestickReason);
+    }
+  }
+  const trend200Reason = reasons.find((reason) => reason.includes("200日線") || reason.includes("5/25/75/200日トレンド整合性"));
+  if (trend200Reason && !aiReasonLabels.some((reason) => reason.includes("200日線") || reason.includes("5/25/75/200日トレンド整合性"))) {
+    if (aiReasonLabels.length >= 6) {
+      aiReasonLabels[aiReasonLabels.length - 1] = trend200Reason;
+    } else {
+      aiReasonLabels.push(trend200Reason);
+    }
+  }
+  const breakoutPrecisionReason = reasons.find((reason) => reason.includes("ダマシブレイク") || reason.includes("ボックス上抜け") || reason.includes("52週高値"));
+  if (breakoutPrecisionReason && !aiReasonLabels.some((reason) => reason.includes("ダマシブレイク") || reason.includes("ボックス上抜け") || reason.includes("52週高値"))) {
+    if (aiReasonLabels.length >= 6) {
+      aiReasonLabels[aiReasonLabels.length - 1] = breakoutPrecisionReason;
+    } else {
+      aiReasonLabels.push(breakoutPrecisionReason);
+    }
+  }
+  const volumeStrengthReason = reasons.find((reason) => reason.includes("Volume Spike Score") || reason.includes("出来高減少補正") || reason.includes("出来高急増率"));
+  if (volumeStrengthReason && !aiReasonLabels.some((reason) => reason.includes("Volume Spike Score") || reason.includes("出来高減少補正") || reason.includes("出来高急増率"))) {
+    if (aiReasonLabels.length >= 6) {
+      aiReasonLabels[aiReasonLabels.length - 1] = volumeStrengthReason;
+    } else {
+      aiReasonLabels.push(volumeStrengthReason);
+    }
+  }
   const trendReason = reasons.find((reason) => reason.includes("総合トレンドは"));
   if (trendReason && !aiReasonLabels.some((reason) => reason.includes("総合トレンドは"))) {
     aiReasonLabels.unshift(trendReason);
