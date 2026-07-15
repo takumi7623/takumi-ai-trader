@@ -104,21 +104,26 @@ test("saveAiScoreWeightsFromBacktest persists and reloads the optimized profile"
     const result = buildBacktestResult();
     const optimized = await saveAiScoreWeightsFromBacktest(result, baseWeights, filePath);
     const raw = readFileSync(filePath, "utf8");
-    const parsed = JSON.parse(raw) as { Trend: number; Momentum: number; Volume: number; PriceAction: number; Risk: number };
+    const parsed = JSON.parse(raw) as { version: number; defaultProfile: { Trend: number; Momentum: number; Volume: number; PriceAction: number; Risk: number }; regimes: Record<string, { Trend: number; Momentum: number; Volume: number; PriceAction: number; Risk: number }> };
 
-    assert.ok(parsed.Trend > 0);
-    assert.ok(parsed.Momentum > 0);
-    assert.ok(parsed.Volume > 0);
-    assert.ok(parsed.PriceAction > 0);
-    assert.ok(parsed.Risk > 0);
+    assert.equal(parsed.version, 2);
+    assert.ok(parsed.defaultProfile.Trend > 0);
+    assert.ok(parsed.defaultProfile.Momentum > 0);
+    assert.ok(parsed.defaultProfile.Volume > 0);
+    assert.ok(parsed.defaultProfile.PriceAction > 0);
+    assert.ok(parsed.defaultProfile.Risk > 0);
+    assert.ok(parsed.regimes.uptrend.Trend > 0);
+    assert.ok(parsed.regimes.highVolatility.Risk > 0);
     assert.ok(optimized.profile.Trend >= 1);
     assert.ok(optimized.profile.Risk >= 0.7);
     assert.ok(optimized.weights.trendStrength !== 1 || optimized.weights.lossRisk !== 1);
 
     const loaded = loadAiScoreWeightProfile(filePath);
+    const loadedStore = loadAiScoreWeightStore(filePath);
     const applied = applyAiScoreWeightProfile(baseWeights, loaded);
     assert.notDeepEqual(applied, baseWeights);
-    assert.equal(loaded.Trend, parsed.Trend);
+    assert.equal(loaded.Trend, parsed.defaultProfile.Trend);
+    assert.equal(loadedStore.version, 2);
     assert.ok(loaded.notes?.some((note) => note.includes("bucketSpread")));
     assert.ok(loaded.notes?.some((note) => note.includes("holdingBias")));
   } finally {

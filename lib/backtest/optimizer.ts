@@ -3,14 +3,16 @@ import type { AiScoreBacktestResult } from "./types";
 import {
   applyAiScoreWeightProfile,
   deriveAiScoreWeightProfileFromBacktest,
-  loadAiScoreWeightProfile,
-  saveAiScoreWeightProfile,
+  deriveMarketRegimeWeightStoresFromBacktest,
+  loadAiScoreWeightStore,
+  saveAiScoreWeightStore,
 } from "./weightProfile";
 
 export type AiScoreBacktestOptimizationResult = {
   changed: boolean;
   notes: string[];
   profile: ReturnType<typeof deriveAiScoreWeightProfileFromBacktest>;
+  store: ReturnType<typeof deriveMarketRegimeWeightStoresFromBacktest>;
   weights: AiScoreWeights;
 };
 
@@ -18,10 +20,14 @@ export function optimizeAiScoreWeightsFromBacktest(
   result: AiScoreBacktestResult,
   currentWeights: AiScoreWeights,
 ) : AiScoreBacktestOptimizationResult {
-  const currentProfile = loadAiScoreWeightProfile();
+  const currentStore = loadAiScoreWeightStore();
+  const currentProfile = currentStore.defaultProfile;
   const profile = deriveAiScoreWeightProfileFromBacktest(result, currentProfile);
+  const store = deriveMarketRegimeWeightStoresFromBacktest(result, currentStore);
   const weights = applyAiScoreWeightProfile(currentWeights, profile);
-  const changed = JSON.stringify(weights) !== JSON.stringify(currentWeights) || JSON.stringify(profile) !== JSON.stringify(currentProfile);
+  const changed = JSON.stringify(weights) !== JSON.stringify(currentWeights)
+    || JSON.stringify(profile) !== JSON.stringify(currentProfile)
+    || JSON.stringify(store) !== JSON.stringify(currentStore);
 
   return {
     changed,
@@ -29,9 +35,10 @@ export function optimizeAiScoreWeightsFromBacktest(
       `AI score weights optimized from backtest: winRate=${result.totals.winRate.toFixed(2)}%`,
       `profitFactor=${result.totals.profitFactor.toFixed(2)}`,
       `maxDrawdown=${result.totals.maxDrawdown.toFixed(2)}%`,
-      `updated profile written to weights.json after save`,
+      `updated regime-aware store written to weights.json after save`,
     ],
     profile,
+    store,
     weights,
   };
 }
@@ -42,6 +49,6 @@ export async function saveAiScoreWeightsFromBacktest(
   filePath?: string,
 ) {
   const optimized = optimizeAiScoreWeightsFromBacktest(result, currentWeights);
-  saveAiScoreWeightProfile(optimized.profile, filePath);
+  saveAiScoreWeightStore(optimized.store, filePath);
   return optimized;
 }
