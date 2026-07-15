@@ -269,6 +269,23 @@ function calculateRegimeMetrics(stock: Pick<Stock, "baselineTrend" | "chartData"
 
 export function inferMarketRegimeFromStock(stock: Pick<Stock, "baselineTrend" | "chartData" | "marketData" | "marketContext">): MarketRegime {
   const metrics = calculateRegimeMetrics(stock);
+  const candles = stock.chartData?.candles ?? [];
+
+  if (candles.length < 30) {
+    if (stock.baselineTrend === "volatile") {
+      return "highVolatility";
+    }
+
+    if (stock.baselineTrend === "up") {
+      return "uptrend";
+    }
+
+    if (stock.baselineTrend === "steady") {
+      return "lowVolatility";
+    }
+
+    return "range";
+  }
 
   if (metrics.baselineTrend === "volatile" || metrics.volatilityBlend >= 5.2 || metrics.latestRange >= 4.5) {
     return "highVolatility";
