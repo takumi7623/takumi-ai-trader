@@ -109,17 +109,35 @@ export function evaluateBacktestResult(result: AiScoreBacktestResult) {
   const midBucket = bucketPerformance(result, "70-79");
   const lowerBucket = bucketPerformance(result, "59以下");
   const shortHolding = average([holdingPerformance(result, 1), holdingPerformance(result, 3)], (item) => item.averageReturn);
+  const mediumHolding = holdingPerformance(result, 5).averageReturn;
   const longHolding = average([holdingPerformance(result, 10), holdingPerformance(result, 20)], (item) => item.averageReturn);
 
   const overallSignal = performanceSignal(result);
-  const bucketEdge = clamp(((highBucket.winRate - lowerBucket.winRate) / 100) + (highBucket.profitFactor - lowerBucket.profitFactor) * 0.06, -0.15, 0.15);
-  const shortTermSignal = clamp((shortHolding - longHolding) / 20 + ((holdingPerformance(result, 1).winRate - holdingPerformance(result, 10).winRate) / 100) * 0.1, -0.12, 0.12);
-  const midBandSignal = clamp(((midBucket.winRate + highMidBucket.winRate) / 200) - 0.25, -0.1, 0.1);
+  const bucketSpread = clamp(
+    ((highBucket.winRate + highMidBucket.winRate) / 2 - lowerBucket.winRate) / 100
+      + (highBucket.profitFactor - lowerBucket.profitFactor) * 0.08
+      + (highBucket.averageReturn - lowerBucket.averageReturn) * 0.04,
+    -0.18,
+    0.18,
+  );
+  const shortTermSignal = clamp(
+    (shortHolding - longHolding) / 20
+      + ((holdingPerformance(result, 1).winRate - holdingPerformance(result, 10).winRate) / 100) * 0.12
+      + (mediumHolding - longHolding) / 30,
+    -0.14,
+    0.14,
+  );
+  const midBandSignal = clamp(
+    ((midBucket.winRate + highMidBucket.winRate) / 200) - 0.25
+      + (midBucket.averageReturn - lowerBucket.averageReturn) * 0.03,
+    -0.12,
+    0.12,
+  );
   const riskSignal = clamp(-(total.maxDrawdown / 100) * 0.55 - Math.min(0.1, Math.max(0, 1 - total.profitFactor) * 0.08), -0.16, 0.06);
 
   return {
     overallSignal,
-    bucketEdge,
+    bucketEdge: bucketSpread,
     shortTermSignal,
     midBandSignal,
     riskSignal,
@@ -151,17 +169,27 @@ export function deriveAiScoreWeightProfileFromBacktest(
 ): AiScoreWeightProfile {
   const assessment = evaluateBacktestResult(result);
   const current = normalizeProfile(currentProfile);
-  const trend = roundWeight(current.Trend * (1 + clamp(assessment.overallSignal * 0.55 + assessment.bucketEdge * 0.45 + assessment.midBandSignal * 0.1, -0.12, 0.12)));
-  const momentum = roundWeight(current.Momentum * (1 + clamp(assessment.overallSignal * 0.45 + assessment.shortTermSignal * 0.7, -0.12, 0.12)));
-  const volume = roundWeight(current.Volume * (1 + clamp(assessment.overallSignal * 0.3 + assessment.midBandSignal * 0.5, -0.1, 0.1)));
-  const priceAction = roundWeight(current.PriceAction * (1 + clamp(assessment.bucketEdge * 0.8 + assessment.overallSignal * 0.35, -0.12, 0.12)));
-  const risk = roundWeight(current.Risk * (1 + clamp((-assessment.riskSignal) + (assessment.metrics.maxDrawdown / 100) * 0.55, -0.12, 0.12)));
+  const confidenceFactor = clamp(Math.log10(Math.max(assessment.metrics.totalTrades, 1) + 1) / 2, 0.45, 1);
+  const trendSignal = assessment.overallSignal * 0.42 + assessment.bucketEdge * 0.48 + assessment.midBandSignal * 0.1;
+  const momentumSignal = assessment.overallSignal * 0.38 + assessment.shortTermSignal * 0.76 + assessment.midBandSignal * 0.06;
+  const volumeSignal = assessment.overallSignal * 0.26 + assessment.midBandSignal * 0.44 + assessment.bucketEdge * 0.1;
+  const priceActionSignal = assessment.bucketEdge * 0.78 + assessment.overallSignal * 0.24 + assessment.shortTermSignal * 0.08;
+  const riskSignal = (-assessment.riskSignal) + (assessment.metrics.maxDrawdown / 100) * 0.45 + Math.max(0, 1.25 - assessment.metrics.profitFactor) * 0.06;
+
+  const trend = roundWeight(current.Trend * (1 + clamp(trendSignal * confidenceFactor, -0.14, 0.14)));
+  const momentum = roundWeight(current.Momentum * (1 + clamp(momentumSignal * confidenceFactor, -0.14, 0.14)));
+  const volume = roundWeight(current.Volume * (1 + clamp(volumeSignal * confidenceFactor, -0.1, 0.1)));
+  const priceAction = roundWeight(current.PriceAction * (1 + clamp(priceActionSignal * confidenceFactor, -0.14, 0.14)));
+  const risk = roundWeight(current.Risk * (1 + clamp(riskSignal * confidenceFactor, -0.12, 0.12)));
 
   const notes = [
     `winRate=${assessment.metrics.winRate.toFixed(2)}%`,
     `averageProfit=${assessment.metrics.averageProfit.toFixed(2)}%`,
     `profitFactor=${assessment.metrics.profitFactor.toFixed(2)}`,
     `maxDrawdown=${assessment.metrics.maxDrawdown.toFixed(2)}%`,
+    `bucketSpread=${assessment.bucketEdge.toFixed(4)}`,
+    `shortTerm=${assessment.shortTermSignal.toFixed(4)}`,
+    `midBand=${assessment.midBandSignal.toFixed(4)}`,
   ];
 
   return normalizeProfile({

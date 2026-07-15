@@ -77,12 +77,15 @@ test("saveAiScoreWeightsFromBacktest persists and reloads the optimized profile"
     assert.ok(parsed.Volume > 0);
     assert.ok(parsed.PriceAction > 0);
     assert.ok(parsed.Risk > 0);
+    assert.ok(optimized.profile.Trend >= 1);
+    assert.ok(optimized.profile.Risk >= 0.7);
     assert.ok(optimized.weights.trendStrength !== 1 || optimized.weights.lossRisk !== 1);
 
     const loaded = loadAiScoreWeightProfile(filePath);
     const applied = applyAiScoreWeightProfile(baseWeights, loaded);
     assert.notDeepEqual(applied, baseWeights);
     assert.equal(loaded.Trend, parsed.Trend);
+    assert.ok(loaded.notes?.some((note) => note.includes("bucketSpread")));
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
