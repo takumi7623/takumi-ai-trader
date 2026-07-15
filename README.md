@@ -20,6 +20,23 @@ You can start editing the page by modifying `app/page.tsx`. The page auto-update
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
+## Tepou30 Snapshot Compare
+
+You can compare two saved Tepou30 top300 snapshots and output an evaluation report:
+
+```bash
+npm run tepou30:compare -- --timeframe=1d --sortMode=ai-total --before=<before-file.json> --after=<after-file.json>
+```
+
+Optional argument:
+
+- `--rankingLimit=50` (range: 1 to 300)
+
+Outputs are written to `.cache/tepou30-reports/` as:
+
+- evaluation JSON
+- markdown summary report
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:
