@@ -1129,6 +1129,23 @@ function resolveLearningProfileApplication(learningProfile: AiLearningProfile, c
   };
 }
 
+function resolveNewsPathCarry(newsCompositeScore: number, adjustedRawScore: number, adjustedBlend: number) {
+  const adjustedClampOverflow = Math.max(0, adjustedRawScore - 100);
+  const adjustedClampUnderflow = Math.max(0, 0 - adjustedRawScore);
+  const positiveNewsCarry = newsCompositeScore > 0
+    ? Math.min(newsCompositeScore * 1.7, adjustedClampOverflow)
+    : 0;
+  const negativeNewsCarry = newsCompositeScore < 0
+    ? Math.min(Math.abs(newsCompositeScore * 1.7), adjustedClampUnderflow)
+    : 0;
+  const newsClampCarry = positiveNewsCarry - negativeNewsCarry;
+
+  return {
+    newsClampCarry,
+    sharedPathOffset: newsClampCarry * adjustedBlend,
+  };
+}
+
 export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions): AiScoreResult {
   const query = input.query.trim();
   const stock = input.stock ?? buildFallbackStock(query);
@@ -2055,20 +2072,15 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
   const backtestBlend = 0.5 + backtestReliability * 0.35;
   const productionBlend = 0.3 - backtestReliability * 0.12;
   const adjustedBlend = 1 - backtestBlend - productionBlend;
-  const adjustedClampOverflow = Math.max(0, adjustedRawScore - 100);
-  const adjustedClampUnderflow = Math.max(0, 0 - adjustedRawScore);
-  const positiveNewsCarry = newsCompositeScore > 0
-    ? Math.min(newsCompositeScore * 1.7, adjustedClampOverflow)
-    : 0;
-  const negativeNewsCarry = newsCompositeScore < 0
-    ? Math.min(Math.abs(newsCompositeScore * 1.7), adjustedClampUnderflow)
-    : 0;
-  const newsClampCarry = positiveNewsCarry - negativeNewsCarry;
+  const newsPathCarry = resolveNewsPathCarry(newsCompositeScore, adjustedRawScore, adjustedBlend);
+  const productionPathScore = productionAiScore + newsPathCarry.sharedPathOffset;
+  const adjustedPathScore = adjustedScore + newsPathCarry.sharedPathOffset;
+  const backtestPathScore = backtestScore + newsPathCarry.sharedPathOffset;
   const blendedRawScore = (
-    productionAiScore * productionBlend
-    + adjustedScore * adjustedBlend
-    + backtestScore * backtestBlend
-  ) + (newsClampCarry * adjustedBlend);
+    productionPathScore * productionBlend
+    + adjustedPathScore * adjustedBlend
+    + backtestPathScore * backtestBlend
+  );
   // Shrink extreme tails so score behavior is more consistent across the full universe.
   const stabilizedScore = 50 + (blendedRawScore - 50) * 1.02 + (marketRegimeScore - 50) * 0.14;
   const bearishFloor = voteBias <= -5 || (lossRiskPercent >= 6 && backtestExpectedRaw <= 0) ? 28 : 34;
