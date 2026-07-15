@@ -253,3 +253,31 @@ test("inferMarketRegimeFromStock and profile selection switch by market environm
   assert.equal(uptrendProfile.profile.Trend, 1.2);
   assert.equal(volatileProfile.profile.Risk, 1.15);
 });
+
+test("deriveMarketRegimeWeightStoresFromBacktest separates regime weights", () => {
+  const store = deriveMarketRegimeWeightStoresFromBacktest(buildBacktestResult(), {
+    defaultProfile: {
+      version: 1,
+      updatedAt: new Date().toISOString(),
+      Trend: 1,
+      Momentum: 1,
+      Volume: 1,
+      PriceAction: 1,
+      Risk: 1,
+    },
+    regimes: {
+      uptrend: { version: 1, updatedAt: new Date().toISOString(), Trend: 1, Momentum: 1, Volume: 1, PriceAction: 1, Risk: 1 },
+      downtrend: { version: 1, updatedAt: new Date().toISOString(), Trend: 1, Momentum: 1, Volume: 1, PriceAction: 1, Risk: 1 },
+      range: { version: 1, updatedAt: new Date().toISOString(), Trend: 1, Momentum: 1, Volume: 1, PriceAction: 1, Risk: 1 },
+      highVolatility: { version: 1, updatedAt: new Date().toISOString(), Trend: 1, Momentum: 1, Volume: 1, PriceAction: 1, Risk: 1 },
+      lowVolatility: { version: 1, updatedAt: new Date().toISOString(), Trend: 1, Momentum: 1, Volume: 1, PriceAction: 1, Risk: 1 },
+    },
+    version: 2,
+    updatedAt: new Date().toISOString(),
+  });
+
+  assert.equal(store.version, 2);
+  assert.notEqual(store.regimes.uptrend.Trend, store.regimes.downtrend.Trend);
+  assert.notEqual(store.regimes.highVolatility.Risk, store.regimes.lowVolatility.Risk);
+  assert.notEqual(store.regimes.range.Momentum, store.regimes.lowVolatility.Momentum);
+});
