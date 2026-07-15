@@ -373,6 +373,11 @@ function classifyReason(text: string) {
 
 function estimateReasonImpact(text: string) {
   const patterns: Array<[RegExp, number]> = [
+    [/v1\.3 Trend|Trend 30点|パーフェクトオーダー|長期上昇トレンド/, 9],
+    [/v1\.3 Momentum|Momentum 20点|モメンタム強度|MACDヒストグラム|RSI/, 8],
+    [/v1\.3 Volume|Volume 20点|5日平均出来高比|出来高急増|ブレイクアウト時の出来高/, 8],
+    [/v1\.3 Price Action|Price Action 20点|52週高値更新|レジスタンス突破|サポート反発|ギャップアップ|ギャップダウン/, 8],
+    [/v1\.3 Risk|Risk 10点|ATR|ボラティリティ過熱/, 7],
     [/短期・中期・長期トレンド/, 9],
     [/ニュース重要度/, 9],
     [/5MAが25MAを上回|25MAが75MAを上回|移動平均線の傾き/, 8],
@@ -574,6 +579,11 @@ function decideSignalEnhanced(params: {
   riskRewardRatio: number;
   marketRegimeScore: number;
   trendConsensusScore: number;
+  confidence: number;
+  lossRiskPercent: number;
+  newsSentimentScore: number;
+  newsSentimentConfidence: number;
+  trendAlignment: number;
 }) {
   const {
     score,
@@ -582,9 +592,25 @@ function decideSignalEnhanced(params: {
     riskRewardRatio,
     marketRegimeScore,
     trendConsensusScore,
+    confidence,
+    lossRiskPercent,
+    newsSentimentScore,
+    newsSentimentConfidence,
+    trendAlignment,
   } = params;
+  const newsAlignment = clamp((newsSentimentScore / 40) * (newsSentimentConfidence / 100), -1, 1);
+  const trendAlignmentNorm = clamp(trendAlignment / 3, -1, 1);
+  const confidenceFactor = clamp((confidence - 60) / 35, -0.4, 1);
+  const riskPressure = clamp((lossRiskPercent - 4.6) / 2.6, 0, 1);
+  const bullishAgreement = expectedValuePercent >= 0.35 && newsAlignment >= 0.18 && trendAlignmentNorm >= 0.25;
+  const bearishAgreement = expectedValuePercent <= -0.4 && newsAlignment <= -0.18 && trendAlignmentNorm <= -0.25;
+
   if (expectedValuePercent <= 0) {
     if (expectedValuePercent <= -0.6 && score < 44 && marketRegimeScore < 48) {
+      return "SELL";
+    }
+
+    if (bearishAgreement && (lossRiskPercent >= 5 || score <= 48)) {
       return "SELL";
     }
 
@@ -597,14 +623,53 @@ function decideSignalEnhanced(params: {
   const minRr = strictMode ? 1.4 : 1.12;
   const minScore = strictMode ? 58 : 48;
   const minTrendConsensus = strictMode ? 58 : 52;
+  const elevatedScoreBand = score >= 95;
+  const buyEdgeScore =
+    expectedValuePercent * 26
+    + (winRate - 50) * 1.7
+    + (riskRewardRatio - 1) * 14
+    - Math.max(0, lossRiskPercent - 4.2) * 10
+    + trendAlignmentNorm * 4
+    + newsAlignment * 3;
+  const weakExpectedProfile = expectedValuePercent < (minExpected + (elevatedScoreBand ? 0.02 : 0.05));
+  const lowWinRateProfile = winRate < (minWinRate - (elevatedScoreBand ? 1 : 0));
+  const weakRrProfile = riskRewardRatio < (minRr + (elevatedScoreBand ? 0 : 0.02));
+  const confidenceScoreOnlyLift = (score >= 90 || confidence >= 80)
+    && (weakExpectedProfile || lowWinRateProfile || weakRrProfile);
+  const buyEdgeFloor = strictMode ? 22 : elevatedScoreBand ? 9 : 12;
+  const buySuppression =
+    score >= minScore + 8
+    && (
+      (newsAlignment <= -0.2 && expectedValuePercent <= minExpected + 0.08)
+      || (riskPressure >= 0.7 && expectedValuePercent < 1)
+      || (winRate < Math.max(48, minWinRate - 4) && expectedValuePercent < minExpected + 0.35)
+    );
+  const adaptiveScoreFloor = minScore + (newsAlignment < -0.15 ? 3 : 0) + (riskPressure >= 0.45 ? 2 : 0);
+  const adaptiveTrendFloor = minTrendConsensus + (newsAlignment < -0.15 ? 3 : 0) + (riskPressure >= 0.45 ? 2 : 0);
+  const buyRecovery =
+    expectedValuePercent >= (minExpected + 0.25)
+    && riskRewardRatio >= (minRr + 0.05)
+    && winRate >= (minWinRate + 1)
+    && score >= (minScore - 3)
+    && trendConsensusScore >= (minTrendConsensus - 3)
+    && bullishAgreement
+    && confidenceFactor >= 0.2
+    && lossRiskPercent <= 4.8;
 
   if (
     expectedValuePercent >= minExpected
     && riskRewardRatio >= minRr
     && winRate >= minWinRate
-    && score >= minScore
-    && trendConsensusScore >= minTrendConsensus
+    && score >= adaptiveScoreFloor
+    && trendConsensusScore >= adaptiveTrendFloor
+    && buyEdgeScore >= buyEdgeFloor
+    && !confidenceScoreOnlyLift
+    && !buySuppression
   ) {
+    return "BUY";
+  }
+
+  if (buyRecovery && buyEdgeScore >= (buyEdgeFloor + 1) && !confidenceScoreOnlyLift && !buySuppression) {
     return "BUY";
   }
 
@@ -619,8 +684,12 @@ function decideSignalEnhanced(params: {
     && (winRate <= 45 || riskRewardRatio <= 0.9)
     && (trendConsensusScore <= 44 || marketRegimeScore <= 40)
     && score <= 46;
+  const sellAligned =
+    bearishAgreement
+    && lossRiskPercent >= 4.8
+    && (score <= 48 || winRate <= 49);
 
-  if (sellStrict || sellLoose) {
+  if (sellStrict || sellLoose || sellAligned) {
     return "SELL";
   }
 
@@ -1311,11 +1380,152 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
       score -= conflictPenalty;
       reasons.push(`シグナル競合（買い${bullishVotes}件・売り${bearishVotes}件）でスコアを減衰しています。`);
     }
+
+    const latestOpenPrice = latest?.open ?? latestClose;
+    const realizedVolatilityLocal = calculateRealizedVolatilityPercent(candles, 20);
+    const lookback52Local = candles.slice(-252);
+    const high52Local = lookback52Local.length > 0 ? Math.max(...lookback52Local.map((candle) => candle.high)) : latestClose;
+    const low52Local = lookback52Local.length > 0 ? Math.min(...lookback52Local.map((candle) => candle.low)) : latestClose;
+    const perfectOrder = latestSma5 > latestSma25 && latestSma25 > latestSma75;
+    const longTrendUp = longTrendPercent >= 2.5 && trendStack.monthlyTrend > 0 && trendStack.weeklyTrend > 0;
+    const longTrendDown = longTrendPercent <= -2.5 && trendStack.monthlyTrend < 0 && trendStack.weeklyTrend < 0;
+    const week52Breakout = latestClose >= high52Local * 0.995 || (latest?.high ?? latestClose) >= high52Local;
+    const supportRebound = nearSupport && latestClose > (previous?.close ?? latestClose) && latestClose >= latestOpenPrice;
+    const breakoutVolume = breakout && volumeSurgeRate >= 1.6;
+    const riskOverheat = atrPercent >= 6 || realizedVolatilityLocal >= 5.5;
+
+    const trendV13Score = clamp(
+      Math.round(
+        50
+          + (latestClose > latestSma5 ? 12 : -11)
+          + (latestSma5 > latestSma25 ? 10 : -9)
+          + (latestSma25 > latestSma75 ? 9 : -9)
+          + (perfectOrder ? 8 : -4)
+          + clamp(maSlopeBlend * 6, -8, 8)
+          + clamp(trendStack.alignment * 3.5, -10, 10)
+          + clamp(trendAssessment.totalScore * 1.1, -12, 12)
+          + (longTrendUp ? 8 : longTrendDown ? -8 : 0),
+      ),
+      0,
+      100,
+    );
+
+    const momentumV13Score = clamp(
+      Math.round(
+        50
+          + (latestRsi >= 50 && latestRsi <= 68 ? 12 : latestRsi > 78 ? -18 : latestRsi > 72 ? -8 : latestRsi < 35 ? -20 : latestRsi < 42 ? -8 : 0)
+          + (latestMacdHistogram > 0 ? 14 : latestMacdHistogram < 0 ? -14 : 0)
+          + (macdHistogramDelta > 0 ? 8 : macdHistogramDelta < 0 ? -8 : 0)
+          + clamp(momentumPersistence * 18, -10, 10)
+          + clamp(momentumConsistency * 24, -12, 12),
+      ),
+      0,
+      100,
+    );
+
+    const volumeV13Score = clamp(
+      Math.round(
+        50
+          + (volumeProfile.surgeRatio >= 2.2 ? 24 : volumeProfile.surgeRatio >= 1.5 ? 15 : volumeProfile.surgeRatio >= 1.1 ? 8 : volumeProfile.surgeRatio <= 0.85 ? -14 : 0)
+          + (volumeProfile.trendPercent >= 20 ? 14 : volumeProfile.trendPercent >= 10 ? 8 : volumeProfile.trendPercent <= -10 ? -10 : 0)
+          + (breakoutVolume ? 18 : breakout && volumeSurgeRate >= 1.2 ? 12 : breakout ? 6 : 0)
+          + (volumeSpike ? 6 : 0)
+          + clamp((volumeSurgeRate - 1) * 8, -5, 6),
+      ),
+      0,
+      100,
+    );
+
+    const priceActionV13Score = clamp(
+      Math.round(
+        50
+          + (week52Breakout ? 16 : latestClose >= high52Local * 0.97 ? 8 : latestClose <= low52Local * 1.03 ? -8 : 0)
+          + (breakout ? 14 : nearResistance ? -8 : 0)
+          + (supportRebound ? 12 : nearSupport ? 6 : 0)
+          + (highBreakout ? 8 : lowBreakdown ? -10 : 0)
+          + clamp(gapInsight.score * 1.15, -10, 10),
+      ),
+      0,
+      100,
+    );
+
+    const riskV13Score = clamp(
+      Math.round(
+        86
+          - (atrPercent * 4.5)
+          - (realizedVolatilityLocal * 4.8)
+          - (riskOverheat ? 12 : 0)
+          + (atrPercent <= 2.5 ? 5 : 0),
+      ),
+      0,
+      100,
+    );
+
+    const v13CompositeScore = clamp(
+      Math.round(
+        (trendV13Score * 0.3)
+        + (momentumV13Score * 0.2)
+        + (volumeV13Score * 0.2)
+        + (priceActionV13Score * 0.2)
+        + (riskV13Score * 0.1),
+      ),
+      0,
+      100,
+    );
+
+    reasons.push(`【v1.3 Trend 30点】5MA ${latestClose > latestSma5 ? "上回り" : "下回り"} / 25MA ${latestSma5 > latestSma25 ? "上回り" : "下回り"} / 75MA ${latestSma25 > latestSma75 ? "上回り" : "下回り"} / パーフェクトオーダー ${perfectOrder ? "成立" : "未成立"} / 長期上昇トレンド ${longTrendUp ? "確認" : longTrendDown ? "弱含み" : "中立"} / 評価${Math.round(trendV13Score * 0.3)}点`);
+    reasons.push(`【v1.3 Momentum 20点】RSI ${latestRsi.toFixed(1)} / MACDヒストグラム ${latestMacdHistogram.toFixed(2)} / ヒストグラム変化 ${macdHistogramDelta.toFixed(2)} / モメンタム強度 ${Math.round(momentumV13Score)}点`);
+    reasons.push(`【v1.3 Volume 20点】5日平均出来高比 ${volumeProfile.surgeRatio.toFixed(2)}倍 / 出来高急増 ${volumeSpike ? "あり" : "なし"} / ブレイクアウト時の出来高 ${breakoutVolume ? "強い" : breakout ? "やや強い" : "未確認"} / 評価${Math.round(volumeV13Score * 0.2)}点`);
+    reasons.push(`【v1.3 Price Action 20点】52週高値更新 ${week52Breakout ? "あり" : "なし"} / レジスタンス突破 ${breakout ? "あり" : "なし"} / サポート反発 ${supportRebound ? "あり" : "なし"} / ギャップ ${gapInsight.score > 0 ? "アップ" : gapInsight.score < 0 ? "ダウン" : "小幅"}(${gapInsight.score.toFixed(1)}) / 評価${Math.round(priceActionV13Score * 0.2)}点`);
+    reasons.push(`【v1.3 Risk 10点】ATR ${atrPercent.toFixed(2)}% / 実現ボラ ${realizedVolatilityLocal.toFixed(2)}% / ボラティリティ過熱 ${riskOverheat ? "あり" : "なし"} / 評価${Math.round(riskV13Score * 0.1)}点`);
+
+    score = v13CompositeScore;
   } else {
     const dayReturn = latest && latest.open > 0 ? ((latest.close - latest.open) / latest.open) * 100 : (stock.marketData?.changePercent ?? 0);
     const dayRange = latest && latest.close > 0 ? ((latest.high - latest.low) / latest.close) * 100 : 0;
     const sparseNewsBias = newsSentimentScore * (newsSentimentConfidence / 100) * 0.45;
-    score = clamp(50 + dayReturn * 6.2 - dayRange * 1.25 + sparseNewsBias, 12, 88);
+    const sparseScore = clamp(50 + dayReturn * 6.2 - dayRange * 1.25 + sparseNewsBias, 12, 88);
+    score = sparseScore;
+    if (candles.length >= 27) {
+      const closes = candles.map((candle) => candle.close);
+      const recentBase = closes[Math.max(0, closes.length - 6)] ?? latestClose;
+      const midBase = closes[Math.max(0, closes.length - 12)] ?? recentBase;
+      const recentMomentum = calcChangePercent(recentBase, latestClose);
+      const midMomentum = calcChangePercent(midBase, latestClose);
+      const recentVolumes = candles.slice(-10).map((candle) => candle.volume);
+      const volumeAverageLocal = recentVolumes.length > 0
+        ? recentVolumes.reduce((sum, value) => sum + value, 0) / recentVolumes.length
+        : 0;
+      const latestVolumeLocal = latest?.volume ?? 0;
+      const volumeBias = volumeAverageLocal > 0 ? latestVolumeLocal / volumeAverageLocal : 1;
+      shortTrendPercent = recentMomentum;
+      midTrendPercent = midMomentum;
+      longTrendPercent = calcChangePercent(closes[0] ?? latestClose, latestClose);
+      momentumPersistence = shortTrendPercent - midTrendPercent;
+      const shortWindow = closes.slice(-Math.min(6, closes.length));
+      const upMoves = shortWindow.filter((value, index) => index > 0 && value >= shortWindow[index - 1]).length;
+      const downMoves = Math.max(0, shortWindow.length - 1 - upMoves);
+      momentumConsistency = shortWindow.length > 2 ? (upMoves - downMoves) / (shortWindow.length - 1) : 0;
+      trendAlignment =
+        (shortTrendPercent > 0 ? 1 : -1)
+        + (midTrendPercent > 0 ? 1 : -1)
+        + (longTrendPercent > 0 ? 1 : -1);
+      maSlopeBlend = calcSlopePercent(closes, Math.max(2, Math.min(4, closes.length - 2)));
+      volumeRatio = volumeBias;
+      volumeSurgeRate = volumeBias;
+      volatilityPercent = dayRange;
+      const continuityTarget = clamp(
+        sparseScore
+          + dayReturn * 1.25
+          + recentMomentum * 1.6
+          + midMomentum * 0.8
+          + (volumeBias - 1) * 6,
+        12,
+        92,
+      );
+      const continuityBlend = clamp((candles.length - 26) / 3, 0, 1);
+      score = sparseScore * (1 - continuityBlend) + continuityTarget * continuityBlend;
+    }
     if (dayReturn >= 0) {
       bullishVotes += 1;
     } else {
@@ -1577,7 +1787,7 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
   const expectancyFloorBoost = backtestExpectedRaw > 0 && backtestRrRaw >= 1.4 && marketRegimeScore >= 42
     ? clamp(backtestExpectedRaw * 2 + Math.max(0, backtestWinRateRaw - 50) * 0.08, 0, 6)
     : 0;
-  let finalScore = clamp(stabilizedScore, bearishFloor + expectancyFloorBoost, 92);
+  let finalScore = clamp(stabilizedScore, bearishFloor + expectancyFloorBoost, 100);
   const weakDowntrendSetup =
     stock.baselineTrend === "volatile"
     && trendAssessment.direction === "下降"
@@ -1726,12 +1936,24 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
     volatility: realizedVolatilityPercent,
     baseExpectedValue: baseExpectedValuePercent,
   });
-  // Keep Ver1.1 score behavior: expected value analyzer must not alter score inputs.
-  const expectedValuePercent = baseExpectedValuePercent;
+  const expectedValuePercent = Number((
+    expectedValueAnalysis.expectedValue * 0.72 + baseExpectedValuePercent * 0.28
+  ).toFixed(2));
   const riskLevel = intrinsicRiskLevel;
   const expectedValue = expectedValueAnalysis.expectedValue;
   const entryPriority = expectedValueAnalysis.entryPriority;
   const rewardLevel = expectedValueAnalysis.rewardLevel;
+  const sampleReliability = clamp(oneYearBacktest.totalTrades / 24, 0, 1);
+  const confidenceAdjustment = Math.round(
+    expectedValuePercent * 3.2
+      + Math.max(0, winRate - 50) * 0.18
+      + (trendConsensusScore - 50) * 0.08
+      + sampleReliability * 2
+      - Math.max(0, 50 - winRate) * 0.24
+      - Math.max(0, 52 - trendConsensusScore) * 0.08
+      - (expectedValuePercent < 0 ? 6 : 0),
+  );
+  confidence = clamp(confidence + confidenceAdjustment, 22, 95);
   const breakevenWinRate = riskRewardRatio > 0 ? (100 / (1 + riskRewardRatio)) : 100;
   const edgeToBreakeven = winRate - breakevenWinRate;
   const consistencyBoost = clamp(edgeToBreakeven * 0.18 + expectedValuePercent * 1.4, -4, 6);
@@ -1752,12 +1974,89 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
     100,
   );
   calibratedFinalScore = clamp(calibratedFinalScore * 0.58 + distributionTargetScore * 0.42, 0, 100);
+  const uncertaintyShrinkPercent = clamp(
+    (consensus <= 1 ? 2.2 : consensus === 2 ? 1.2 : 0)
+      + Math.max(0, 10 - oneYearBacktest.totalTrades) * 0.35
+      + (volatilityPercent >= 5 ? 1.6 : volatilityPercent >= 3.5 ? 0.8 : 0)
+      + Math.max(0, 56 - trendConsensusScore) * 0.04,
+    0,
+    8,
+  );
+  calibratedFinalScore = 50 + (calibratedFinalScore - 50) * (1 - uncertaintyShrinkPercent / 100);
+  const scoreEdge = calibratedFinalScore - 50;
+  const edgeMagnitude = Math.abs(scoreEdge);
+  const expectedEdge = expectedValuePercent;
+  const directionalMismatch = scoreEdge * expectedEdge < 0;
+  const tailCompressionPercent = clamp(
+    (edgeMagnitude >= 28 ? (edgeMagnitude - 28) * 0.22 : 0)
+      + (directionalMismatch ? Math.min(3.2, Math.abs(expectedEdge) * 1.1) : 0)
+      + (trendConsensusScore < 50 && edgeMagnitude >= 18 ? (50 - trendConsensusScore) * 0.05 : 0),
+    0,
+    6,
+  );
+  calibratedFinalScore = 50 + scoreEdge * (1 - tailCompressionPercent / 100);
+  const probabilityMin = Math.min(probability5m, probability15m, probability1d);
+  const probabilityMax = Math.max(probability5m, probability15m, probability1d);
+  const probabilityMedian = probability5m + probability15m + probability1d - probabilityMin - probabilityMax;
+  const probabilityDispersion = probabilityMax - probabilityMin;
+  const probabilityAnchorScore = clamp(50 + (probabilityMedian - 50) * 0.95, 0, 100);
+  const probabilityAnchorPercent = clamp(
+    (probabilityDispersion >= 12 ? (probabilityDispersion - 12) * 0.22 : 0)
+      + (Math.abs(calibratedFinalScore - probabilityAnchorScore) >= 10 ? 0.8 : 0),
+    0,
+    4.2,
+  );
+  calibratedFinalScore =
+    calibratedFinalScore * (1 - probabilityAnchorPercent / 100)
+    + probabilityAnchorScore * (probabilityAnchorPercent / 100);
+  if (calibratedFinalScore >= 90) {
+    const upperBandPosition = clamp((calibratedFinalScore - 90) / 10, 0, 1);
+    const spreadSignal =
+      (probabilityMedian - 50) * 0.018
+      + expectedValuePercent * 0.11
+      + (trendConsensusScore - 50) * 0.006;
+    const spreadCap = 0.38 * (0.6 + upperBandPosition * 0.4);
+    const spreadAdjustment = clamp(spreadSignal, -spreadCap, spreadCap);
+    calibratedFinalScore = clamp(calibratedFinalScore + spreadAdjustment, 0, 100);
+  }
+  if (calibratedFinalScore >= 95) {
+    const highBandRatio = clamp((calibratedFinalScore - 95) / 5, 0, 1);
+    const expectedRankSignal = clamp(expectedValuePercent, -1.2, 3.5);
+    const confidenceRankSignal = clamp((confidence - 70) / 30, 0, 1);
+    const rankAdjustment = clamp(
+      expectedRankSignal * confidenceRankSignal * 0.18 * (0.6 + highBandRatio * 0.4),
+      -0.16,
+      0.48,
+    );
+    calibratedFinalScore = clamp(calibratedFinalScore + rankAdjustment, 0, 100);
+  }
+  if (newsSentimentScore !== 0) {
+    const newsStrength = clamp(Math.abs(newsSentimentScore) / 40, 0, 1);
+    const newsDirection = newsSentimentScore > 0 ? 1 : -1;
+    const chartDirectionScore = clamp(
+      trendAlignment * 0.2
+        + maSlopeBlend * 0.45
+        + momentumPersistence * 0.35
+        + (trendAssessment.totalScore / 16) * 0.4,
+      -1,
+      1,
+    );
+    const newsTrendAlignment = newsDirection * chartDirectionScore;
+    const alignmentFactor = newsTrendAlignment >= 0
+      ? 0.45 + newsTrendAlignment * 0.55
+      : 0.35 + newsTrendAlignment * 0.25;
+    const newsConfidenceFactor = clamp((newsSentimentConfidence / 100) * ((confidence - 45) / 45), 0.25, 1);
+    const newsRawAdjustment = newsDirection * newsStrength * alignmentFactor * newsConfidenceFactor * 0.85;
+    const highScoreNewsDamp = calibratedFinalScore >= 95 ? 0.45 : calibratedFinalScore >= 90 ? 0.7 : 1;
+    const newsFinalAdjustment = clamp(newsRawAdjustment * highScoreNewsDamp, -0.85, 0.85);
+    calibratedFinalScore = clamp(calibratedFinalScore + newsFinalAdjustment, 0, 100);
+  }
   if (weakDowntrendSetup) {
     calibratedFinalScore = Math.min(calibratedFinalScore, 55);
   }
   const rankedReasons = rankReasons(reasons);
   const summary = [
-    `13項目評価（移動平均・MACD・RSI・出来高・ATR・ボラ・52週レンジ・日経・TOPIX・ドル円・ニュース・バックテスト等）によるAI評価は${Math.round(calibratedFinalScore)}点です。`,
+    `v1.3評価（Trend 30点 / Momentum 20点 / Volume 20点 / Price Action 20点 / Risk 10点）によるAI評価は${Math.round(calibratedFinalScore)}点です。`,
     trendStack.dailyTrend || trendStack.weeklyTrend || trendStack.monthlyTrend
       ? `日足/週足/月足は${trendStack.dailyTrend.toFixed(2)}% / ${trendStack.weeklyTrend.toFixed(2)}% / ${trendStack.monthlyTrend.toFixed(2)}%で、総合トレンドは${trendAssessment.direction}です。`
       : "",
@@ -1831,6 +2130,9 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
     aiReason.push(`• ${consensusReasonForAi}`);
   }
   const roundedScore = Math.round(calibratedFinalScore);
+  const displayScore = roundedScore >= 90
+    ? Number(calibratedFinalScore.toFixed(1))
+    : roundedScore;
   const signal = decideSignalEnhanced({
     score: roundedScore,
     winRate,
@@ -1838,6 +2140,11 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
     riskRewardRatio: effectiveRiskRewardRatio,
     marketRegimeScore,
     trendConsensusScore,
+    confidence,
+    lossRiskPercent,
+    newsSentimentScore,
+    newsSentimentConfidence,
+    trendAlignment,
   });
   const judgment = decideJudgmentEnhanced({
     score: roundedScore,
@@ -1851,7 +2158,7 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
     code: stock.code,
     name: stock.name,
     sector: stock.sector,
-    score: roundedScore,
+    score: displayScore,
     judgment,
     signal,
     trend: trendLabels[stock.baselineTrend],
