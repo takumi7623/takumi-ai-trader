@@ -5,8 +5,11 @@ import path from "node:path";
 import test from "node:test";
 import {
   applyAiScoreWeightProfile,
+  deriveMarketRegimeWeightStoresFromBacktest,
   loadAiScoreWeightProfile,
+  loadAiScoreWeightStore,
   saveAiScoreWeightProfile,
+  saveAiScoreWeightStore,
   saveAiScoreWeightsFromBacktest,
 } from "./index";
 import type { AiScoreWeights } from "../types";
@@ -113,6 +116,42 @@ test("saveAiScoreWeightProfile roundtrips a profile with the requested categorie
     assert.equal(loaded.Volume, 1.05);
     assert.equal(loaded.PriceAction, 1.02);
     assert.equal(loaded.Risk, 0.9);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("saveAiScoreWeightStore roundtrips a regime-aware store", () => {
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "ai-score-store-"));
+  const filePath = path.join(tempDir, "weights.json");
+  try {
+    const store = deriveMarketRegimeWeightStoresFromBacktest(buildBacktestResult(), {
+      defaultProfile: {
+        version: 1,
+        updatedAt: new Date().toISOString(),
+        Trend: 1,
+        Momentum: 1,
+        Volume: 1,
+        PriceAction: 1,
+        Risk: 1,
+      },
+      regimes: {
+        uptrend: { version: 1, updatedAt: new Date().toISOString(), Trend: 1, Momentum: 1, Volume: 1, PriceAction: 1, Risk: 1 },
+        downtrend: { version: 1, updatedAt: new Date().toISOString(), Trend: 1, Momentum: 1, Volume: 1, PriceAction: 1, Risk: 1 },
+        range: { version: 1, updatedAt: new Date().toISOString(), Trend: 1, Momentum: 1, Volume: 1, PriceAction: 1, Risk: 1 },
+        highVolatility: { version: 1, updatedAt: new Date().toISOString(), Trend: 1, Momentum: 1, Volume: 1, PriceAction: 1, Risk: 1 },
+        lowVolatility: { version: 1, updatedAt: new Date().toISOString(), Trend: 1, Momentum: 1, Volume: 1, PriceAction: 1, Risk: 1 },
+      },
+      version: 2,
+      updatedAt: new Date().toISOString(),
+    });
+
+    saveAiScoreWeightStore(store, filePath);
+    const loaded = loadAiScoreWeightStore(filePath);
+    assert.equal(loaded.version, 2);
+    assert.ok(loaded.regimes.uptrend.Trend > 0);
+    assert.ok(loaded.regimes.downtrend.Risk > 0);
+    assert.ok(loaded.defaultProfile.Momentum > 0);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }

@@ -1,6 +1,31 @@
 import type { AiScoreWeights } from "../types";
 import type { AiScoreBacktestResult } from "./types";
 
+export type MarketRegime = "uptrend" | "downtrend" | "range" | "highVolatility" | "lowVolatility";
+
+export type MarketRegimeLabel =
+  | "上昇トレンド"
+  | "下降トレンド"
+  | "レンジ相場"
+  | "高ボラティリティ"
+  | "低ボラティリティ";
+
+export const MARKET_REGIMES: MarketRegime[] = [
+  "uptrend",
+  "downtrend",
+  "range",
+  "highVolatility",
+  "lowVolatility",
+];
+
+const MARKET_REGIME_LABELS: Record<MarketRegime, MarketRegimeLabel> = {
+  uptrend: "上昇トレンド",
+  downtrend: "下降トレンド",
+  range: "レンジ相場",
+  highVolatility: "高ボラティリティ",
+  lowVolatility: "低ボラティリティ",
+};
+
 export type AiScoreWeightProfile = {
   version: 1;
   updatedAt: string;
@@ -19,6 +44,15 @@ export type AiScoreWeightProfile = {
   notes?: string[];
 };
 
+export type MarketRegimeWeightProfiles = Record<MarketRegime, AiScoreWeightProfile>;
+
+export type AiScoreWeightStore = {
+  version: 2;
+  updatedAt: string;
+  defaultProfile: AiScoreWeightProfile;
+  regimes: MarketRegimeWeightProfiles;
+};
+
 export const DEFAULT_AI_SCORE_WEIGHT_PROFILE: AiScoreWeightProfile = {
   version: 1,
   updatedAt: new Date(0).toISOString(),
@@ -29,8 +63,27 @@ export const DEFAULT_AI_SCORE_WEIGHT_PROFILE: AiScoreWeightProfile = {
   Risk: 1,
 };
 
+export const DEFAULT_MARKET_REGIME_WEIGHT_PROFILES: MarketRegimeWeightProfiles = {
+  uptrend: DEFAULT_AI_SCORE_WEIGHT_PROFILE,
+  downtrend: DEFAULT_AI_SCORE_WEIGHT_PROFILE,
+  range: DEFAULT_AI_SCORE_WEIGHT_PROFILE,
+  highVolatility: DEFAULT_AI_SCORE_WEIGHT_PROFILE,
+  lowVolatility: DEFAULT_AI_SCORE_WEIGHT_PROFILE,
+};
+
+export const DEFAULT_AI_SCORE_WEIGHT_STORE: AiScoreWeightStore = {
+  version: 2,
+  updatedAt: new Date(0).toISOString(),
+  defaultProfile: DEFAULT_AI_SCORE_WEIGHT_PROFILE,
+  regimes: DEFAULT_MARKET_REGIME_WEIGHT_PROFILES,
+};
+
 export function resolveAiScoreWeightProfilePath() {
   return `${process.cwd()}\\.cache\\weights.json`;
+}
+
+export function getMarketRegimeLabel(regime: MarketRegime) {
+  return MARKET_REGIME_LABELS[regime];
 }
 
 function clamp(value: number, min: number, max: number) {
@@ -52,6 +105,21 @@ function normalizeProfile(profile?: Partial<AiScoreWeightProfile> | null): AiSco
     Risk: roundWeight(profile?.Risk ?? DEFAULT_AI_SCORE_WEIGHT_PROFILE.Risk),
     metrics: profile?.metrics,
     notes: profile?.notes,
+  };
+}
+
+function normalizeStore(store?: Partial<AiScoreWeightStore> | null): AiScoreWeightStore {
+  const defaultProfile = normalizeProfile(store?.defaultProfile ?? null);
+  const regimes = MARKET_REGIMES.reduce((accumulator, regime) => {
+    accumulator[regime] = normalizeProfile(store?.regimes?.[regime] ?? null);
+    return accumulator;
+  }, {} as MarketRegimeWeightProfiles);
+
+  return {
+    version: 2,
+    updatedAt: store?.updatedAt ?? new Date(0).toISOString(),
+    defaultProfile,
+    regimes,
   };
 }
 
@@ -210,6 +278,33 @@ export function deriveAiScoreWeightProfileFromBacktest(
   });
 }
 
+export function deriveMarketRegimeWeightStoresFromBacktest(result: AiScoreBacktestResult, currentStore?: Partial<AiScoreWeightStore> | null) {
+  const baseStore = normalizeStore(currentStore);
+  const baseProfile = baseStore.defaultProfile;
+  const derivedDefaultProfile = deriveAiScoreWeightProfileFromBacktest(result, baseProfile);
+  const derivedRegimes = MARKET_REGIMES.reduce((accumulator, regime) => {
+    const label = getMarketRegimeLabel(regime);
+    const regimeNotes = [
+      `regime=${label}`,
+      ...(derivedDefaultProfile.notes ?? []),
+    ];
+
+    accumulator[regime] = normalizeProfile({
+      ...derivedDefaultProfile,
+      updatedAt: new Date().toISOString(),
+      notes: regimeNotes,
+    });
+    return accumulator;
+  }, {} as MarketRegimeWeightProfiles);
+
+  return normalizeStore({
+    version: 2,
+    updatedAt: new Date().toISOString(),
+    defaultProfile: derivedDefaultProfile,
+    regimes: derivedRegimes,
+  });
+}
+
 export function applyAiScoreWeightProfile(baseWeights: AiScoreWeights, profile: AiScoreWeightProfile) {
   const trendMix = profile.Trend;
   const momentumMix = profile.Momentum;
@@ -256,5 +351,40 @@ export function saveAiScoreWeightProfile(profile: AiScoreWeightProfile, filePath
   const fs = getFs();
   fs.mkdirSync(dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, JSON.stringify(profile, null, 2), "utf8");
+  return filePath;
+}
+
+export function loadAiScoreWeightStore(filePath = resolveAiScoreWeightProfilePath()) {
+  const fs = getFs();
+
+  if (!fs.existsSync(filePath)) {
+    return DEFAULT_AI_SCORE_WEIGHT_STORE;
+  }
+
+  try {
+    const parsed = JSON.parse(fs.readFileSync(filePath, "utf8")) as Partial<AiScoreWeightStore> & Partial<AiScoreWeightProfile>;
+    if (parsed.version === 2 || parsed.regimes || parsed.defaultProfile) {
+      return normalizeStore(parsed as Partial<AiScoreWeightStore>);
+    }
+
+    const legacyProfile = normalizeProfile(parsed as Partial<AiScoreWeightProfile>);
+    return normalizeStore({
+      version: 2,
+      updatedAt: legacyProfile.updatedAt,
+      defaultProfile: legacyProfile,
+      regimes: MARKET_REGIMES.reduce((accumulator, regime) => {
+        accumulator[regime] = legacyProfile;
+        return accumulator;
+      }, {} as MarketRegimeWeightProfiles),
+    });
+  } catch {
+    return DEFAULT_AI_SCORE_WEIGHT_STORE;
+  }
+}
+
+export function saveAiScoreWeightStore(store: AiScoreWeightStore, filePath = resolveAiScoreWeightProfilePath()) {
+  const fs = getFs();
+  fs.mkdirSync(dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, JSON.stringify(normalizeStore(store), null, 2), "utf8");
   return filePath;
 }
