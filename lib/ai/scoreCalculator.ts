@@ -1146,6 +1146,32 @@ function resolveNewsPathCarry(newsCompositeScore: number, adjustedRawScore: numb
   };
 }
 
+function resolveTechnicalPathCarry(params: {
+  baseScore: number;
+  technicalWeighted: number;
+  baseBlend: number;
+  technicalBlend: number;
+  adjustedRawScore: number;
+  adjustedBlend: number;
+}) {
+  const { baseScore, technicalWeighted, baseBlend, technicalBlend, adjustedRawScore, adjustedBlend } = params;
+  const neutralBaseBlend = clamp(0.34 * 1, 0.2, 0.45);
+  const neutralTechnicalBlend = clamp(0.6 * 1, 0.4, 0.78);
+  const technicalWeightDelta =
+    baseScore * (baseBlend - neutralBaseBlend)
+    + technicalWeighted * (technicalBlend - neutralTechnicalBlend);
+  const overflow = Math.max(0, adjustedRawScore - 100);
+  const underflow = Math.max(0, 0 - adjustedRawScore);
+  const positiveCarry = technicalWeightDelta > 0 ? Math.min(technicalWeightDelta, overflow) : 0;
+  const negativeCarry = technicalWeightDelta < 0 ? Math.min(Math.abs(technicalWeightDelta), underflow) : 0;
+  const technicalClampCarry = positiveCarry - negativeCarry;
+
+  return {
+    technicalClampCarry,
+    sharedPathOffset: technicalClampCarry * adjustedBlend,
+  };
+}
+
 export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions): AiScoreResult {
   const query = input.query.trim();
   const stock = input.stock ?? buildFallbackStock(query);
@@ -2072,10 +2098,19 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
   const backtestBlend = 0.5 + backtestReliability * 0.35;
   const productionBlend = 0.3 - backtestReliability * 0.12;
   const adjustedBlend = 1 - backtestBlend - productionBlend;
+  const technicalPathCarry = resolveTechnicalPathCarry({
+    baseScore,
+    technicalWeighted,
+    baseBlend,
+    technicalBlend,
+    adjustedRawScore,
+    adjustedBlend,
+  });
   const newsPathCarry = resolveNewsPathCarry(newsCompositeScore, adjustedRawScore, adjustedBlend);
-  const productionPathScore = productionAiScore + newsPathCarry.sharedPathOffset;
-  const adjustedPathScore = adjustedScore + newsPathCarry.sharedPathOffset;
-  const backtestPathScore = backtestScore + newsPathCarry.sharedPathOffset;
+  const pathSharedOffset = newsPathCarry.sharedPathOffset + technicalPathCarry.sharedPathOffset;
+  const productionPathScore = productionAiScore + pathSharedOffset;
+  const adjustedPathScore = adjustedScore + pathSharedOffset;
+  const backtestPathScore = backtestScore + pathSharedOffset;
   const blendedRawScore = (
     productionPathScore * productionBlend
     + adjustedPathScore * adjustedBlend
