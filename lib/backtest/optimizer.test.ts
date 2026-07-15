@@ -86,6 +86,7 @@ test("saveAiScoreWeightsFromBacktest persists and reloads the optimized profile"
     assert.notDeepEqual(applied, baseWeights);
     assert.equal(loaded.Trend, parsed.Trend);
     assert.ok(loaded.notes?.some((note) => note.includes("bucketSpread")));
+    assert.ok(loaded.notes?.some((note) => note.includes("holdingBias")));
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }

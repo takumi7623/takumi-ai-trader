@@ -169,11 +169,15 @@ export function deriveAiScoreWeightProfileFromBacktest(
 ): AiScoreWeightProfile {
   const assessment = evaluateBacktestResult(result);
   const current = normalizeProfile(currentProfile);
+  const shortHoldingReturn = average([holdingPerformance(result, 1), holdingPerformance(result, 3)], (item) => item.averageReturn);
+  const longHoldingReturn = average([holdingPerformance(result, 10), holdingPerformance(result, 20)], (item) => item.averageReturn);
+  const holdingBias = clamp((shortHoldingReturn - longHoldingReturn) / 40, -0.08, 0.08);
+  const longBias = -holdingBias;
   const confidenceFactor = clamp(Math.log10(Math.max(assessment.metrics.totalTrades, 1) + 1) / 2, 0.45, 1);
-  const trendSignal = assessment.overallSignal * 0.42 + assessment.bucketEdge * 0.48 + assessment.midBandSignal * 0.1;
-  const momentumSignal = assessment.overallSignal * 0.38 + assessment.shortTermSignal * 0.76 + assessment.midBandSignal * 0.06;
-  const volumeSignal = assessment.overallSignal * 0.26 + assessment.midBandSignal * 0.44 + assessment.bucketEdge * 0.1;
-  const priceActionSignal = assessment.bucketEdge * 0.78 + assessment.overallSignal * 0.24 + assessment.shortTermSignal * 0.08;
+  const trendSignal = assessment.overallSignal * 0.42 + assessment.bucketEdge * 0.48 + assessment.midBandSignal * 0.1 + longBias * 0.55;
+  const momentumSignal = assessment.overallSignal * 0.38 + assessment.shortTermSignal * 0.76 + assessment.midBandSignal * 0.06 + holdingBias * 0.65;
+  const volumeSignal = assessment.overallSignal * 0.26 + assessment.midBandSignal * 0.44 + assessment.bucketEdge * 0.1 + holdingBias * 0.4;
+  const priceActionSignal = assessment.bucketEdge * 0.78 + assessment.overallSignal * 0.24 + assessment.shortTermSignal * 0.08 + longBias * 0.45;
   const riskSignal = (-assessment.riskSignal) + (assessment.metrics.maxDrawdown / 100) * 0.45 + Math.max(0, 1.25 - assessment.metrics.profitFactor) * 0.06;
 
   const trend = roundWeight(current.Trend * (1 + clamp(trendSignal * confidenceFactor, -0.14, 0.14)));
@@ -190,6 +194,7 @@ export function deriveAiScoreWeightProfileFromBacktest(
     `bucketSpread=${assessment.bucketEdge.toFixed(4)}`,
     `shortTerm=${assessment.shortTermSignal.toFixed(4)}`,
     `midBand=${assessment.midBandSignal.toFixed(4)}`,
+    `holdingBias=${holdingBias.toFixed(4)}`,
   ];
 
   return normalizeProfile({
