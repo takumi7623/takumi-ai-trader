@@ -12,6 +12,12 @@ import {
 } from "../indicators";
 import { calculateExpectedValue } from "./expectedValueAnalyzer";
 import { optimizeAiScoreWeights as optimizeWeights } from "./weightOptimizer";
+import {
+  applyAiScoreWeightProfile,
+  getMarketRegimeLabel,
+  loadAiScoreWeightStore,
+  selectAiScoreWeightProfileForStock,
+} from "../backtest/weightProfile";
 
 const trendLabels: Record<Stock["baselineTrend"], string> = {
   up: "上昇基調",
@@ -1098,10 +1104,14 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
   const latestPrice = stock.marketData?.price ?? latest?.close ?? 1000;
   const baseWeights = normalizeWeights(options?.weights);
   const learningProfile = normalizeLearningProfile(options?.learningProfile ?? stock.analysisLearningProfile);
-  const weights = buildAdaptiveWeights(baseWeights, stock.timeframe, candles.length);
+  const weightStore = loadAiScoreWeightStore();
+  const { regime, profile: marketRegimeProfile } = selectAiScoreWeightProfileForStock(stock, weightStore);
+  const regimeWeights = applyAiScoreWeightProfile(baseWeights, marketRegimeProfile);
+  const weights = buildAdaptiveWeights(regimeWeights, stock.timeframe, candles.length);
 
   let score = 50;
   const reasons: string[] = [];
+  reasons.push(`相場環境は${getMarketRegimeLabel(regime)}と判定し、対応する重みを適用しています。`);
   let bullishVotes = 0;
   let bearishVotes = 0;
   let latestRsi = 50;

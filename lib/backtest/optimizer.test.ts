@@ -6,13 +6,15 @@ import test from "node:test";
 import {
   applyAiScoreWeightProfile,
   deriveMarketRegimeWeightStoresFromBacktest,
+  inferMarketRegimeFromStock,
   loadAiScoreWeightProfile,
   loadAiScoreWeightStore,
   saveAiScoreWeightProfile,
   saveAiScoreWeightStore,
   saveAiScoreWeightsFromBacktest,
+  selectAiScoreWeightProfileForStock,
 } from "./index";
-import type { AiScoreWeights } from "../types";
+import type { AiScoreWeights, Stock } from "../types";
 import type { AiScoreBacktestResult } from "./types";
 
 function buildBacktestResult(): AiScoreBacktestResult {
@@ -65,6 +67,35 @@ const baseWeights: AiScoreWeights = {
   lossRisk: 1,
   probabilityUp: 1,
 };
+
+function buildRegimeStock(baselineTrend: Stock["baselineTrend"], candles: NonNullable<Stock["chartData"]>["candles"]): Stock {
+  const latest = candles[candles.length - 1];
+
+  return {
+    code: baselineTrend === "volatile" ? "9999" : "7203",
+    name: baselineTrend === "volatile" ? "テスト高ボラ銘柄" : "テスト上昇銘柄",
+    sector: "テスト",
+    baselineTrend,
+    description: "テスト用のサンプルデータ",
+    marketData: {
+      price: latest?.close ?? 0,
+      open: latest?.open ?? 0,
+      high: latest?.high ?? 0,
+      low: latest?.low ?? 0,
+      previousClose: candles[candles.length - 2]?.close ?? 0,
+      change: latest && candles[candles.length - 2] ? latest.close - candles[candles.length - 2].close : 0,
+      changePercent: latest && candles[candles.length - 2] && candles[candles.length - 2].close > 0
+        ? ((latest.close - candles[candles.length - 2].close) / candles[candles.length - 2].close) * 100
+        : 0,
+      currency: "JPY",
+      asOf: latest?.time ?? null,
+    },
+    chartData: { candles },
+    dataStatus: "real",
+    dataReason: null,
+    timeframe: "1d",
+  };
+}
 
 test("saveAiScoreWeightsFromBacktest persists and reloads the optimized profile", async () => {
   const tempDir = mkdtempSync(path.join(os.tmpdir(), "ai-score-weights-"));
@@ -155,4 +186,58 @@ test("saveAiScoreWeightStore roundtrips a regime-aware store", () => {
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
+});
+
+test("inferMarketRegimeFromStock and profile selection switch by market environment", () => {
+  const uptrendCandles = Array.from({ length: 80 }, (_, index) => {
+    const base = 1800 + index * 18;
+    return {
+      time: `2025-07-${String((index % 30) + 1).padStart(2, "0")}`,
+      open: base,
+      high: base + 16,
+      low: base - 10,
+      close: base + 12,
+      volume: 1400000 + index * 15000,
+    };
+  });
+
+  const volatileCandles = Array.from({ length: 80 }, (_, index) => {
+    const base = 2500 + (index % 2 === 0 ? index * 10 : -index * 11);
+    return {
+      time: `2025-08-${String((index % 30) + 1).padStart(2, "0")}`,
+      open: base,
+      high: base + 90,
+      low: base - 95,
+      close: base + (index % 2 === 0 ? 40 : -35),
+      volume: 3200000 + index * 45000,
+    };
+  });
+
+  const store = {
+    version: 2 as const,
+    updatedAt: new Date().toISOString(),
+    defaultProfile: { version: 1 as const, updatedAt: new Date().toISOString(), Trend: 1, Momentum: 1, Volume: 1, PriceAction: 1, Risk: 1 },
+    regimes: {
+      uptrend: { version: 1 as const, updatedAt: new Date().toISOString(), Trend: 1.2, Momentum: 1, Volume: 1, PriceAction: 1, Risk: 1 },
+      downtrend: { version: 1 as const, updatedAt: new Date().toISOString(), Trend: 0.9, Momentum: 0.9, Volume: 1, PriceAction: 0.95, Risk: 1.1 },
+      range: { version: 1 as const, updatedAt: new Date().toISOString(), Trend: 0.85, Momentum: 1.1, Volume: 1.05, PriceAction: 1.02, Risk: 1 },
+      highVolatility: { version: 1 as const, updatedAt: new Date().toISOString(), Trend: 0.8, Momentum: 1.05, Volume: 1.1, PriceAction: 0.9, Risk: 1.15 },
+      lowVolatility: { version: 1 as const, updatedAt: new Date().toISOString(), Trend: 1.1, Momentum: 0.95, Volume: 0.95, PriceAction: 1.08, Risk: 0.92 },
+    },
+  };
+
+  const uptrendStock = buildRegimeStock("up", uptrendCandles);
+  const volatileStock = buildRegimeStock("volatile", volatileCandles);
+
+  const uptrendRegime = inferMarketRegimeFromStock(uptrendStock);
+  const volatileRegime = inferMarketRegimeFromStock(volatileStock);
+  const uptrendProfile = selectAiScoreWeightProfileForStock(uptrendStock, store);
+  const volatileProfile = selectAiScoreWeightProfileForStock(volatileStock, store);
+
+  assert.equal(uptrendRegime, "uptrend");
+  assert.equal(volatileRegime, "highVolatility");
+  assert.equal(uptrendProfile.regime, "uptrend");
+  assert.equal(volatileProfile.regime, "highVolatility");
+  assert.equal(uptrendProfile.profile.Trend, 1.2);
+  assert.equal(volatileProfile.profile.Risk, 1.15);
 });

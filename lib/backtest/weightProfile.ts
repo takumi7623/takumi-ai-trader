@@ -1,4 +1,4 @@
-import type { AiScoreWeights } from "../types";
+import type { AiScoreWeights, Stock } from "../types";
 import type { AiScoreBacktestResult } from "./types";
 
 export type MarketRegime = "uptrend" | "downtrend" | "range" | "highVolatility" | "lowVolatility";
@@ -231,6 +231,149 @@ function average<T>(items: T[], selector: (item: T) => number) {
   return items.reduce((sum, item) => sum + selector(item), 0) / items.length;
 }
 
+function calcChangePercent(base: number, latest: number) {
+  if (base <= 0) {
+    return 0;
+  }
+
+  return ((latest - base) / base) * 100;
+}
+
+function calculateRegimeMetrics(stock: Pick<Stock, "baselineTrend" | "chartData" | "marketData" | "marketContext">) {
+  const candles = stock.chartData?.candles ?? [];
+  const closes = candles.map((candle) => candle.close);
+  const latestClose = closes[closes.length - 1] ?? stock.marketData?.price ?? 0;
+  const shortBase = closes[Math.max(0, closes.length - 6)] ?? latestClose;
+  const midBase = closes[Math.max(0, closes.length - 18)] ?? latestClose;
+  const longBase = closes[Math.max(0, closes.length - 60)] ?? latestClose;
+  const shortTrend = calcChangePercent(shortBase, latestClose);
+  const midTrend = calcChangePercent(midBase, latestClose);
+  const longTrend = calcChangePercent(longBase, latestClose);
+  const latestRange = candles[candles.length - 1]
+    ? ((candles[candles.length - 1].high - candles[candles.length - 1].low) / Math.max(latestClose, 1)) * 100
+    : 0;
+  const recentRanges = candles.slice(-20).map((candle) => ((candle.high - candle.low) / Math.max(candle.close, 1)) * 100);
+  const averageRange = average(recentRanges, (value) => value);
+
+  return {
+    shortTrend,
+    midTrend,
+    longTrend,
+    latestRange,
+    volatilityBlend: averageRange * 0.7 + latestRange * 0.3,
+    trendBlend: shortTrend * 0.34 + midTrend * 0.33 + longTrend * 0.33,
+    flatness: Math.abs(shortTrend) + Math.abs(midTrend) + Math.abs(longTrend),
+    baselineTrend: stock.baselineTrend,
+  };
+}
+
+export function inferMarketRegimeFromStock(stock: Pick<Stock, "baselineTrend" | "chartData" | "marketData" | "marketContext">): MarketRegime {
+  const metrics = calculateRegimeMetrics(stock);
+
+  if (metrics.baselineTrend === "volatile" || metrics.volatilityBlend >= 5.2 || metrics.latestRange >= 4.5) {
+    return "highVolatility";
+  }
+
+  if (metrics.volatilityBlend <= 2.3 && metrics.flatness <= 8.5) {
+    return "lowVolatility";
+  }
+
+  if (metrics.trendBlend >= 4.5) {
+    return "uptrend";
+  }
+
+  if (metrics.trendBlend <= -4.5) {
+    return "downtrend";
+  }
+
+  return "range";
+}
+
+function mixProfile(
+  profile: AiScoreWeightProfile,
+  factors: Partial<Record<"Trend" | "Momentum" | "Volume" | "PriceAction" | "Risk", number>>,
+) {
+  return normalizeProfile({
+    ...profile,
+    Trend: profile.Trend * (factors.Trend ?? 1),
+    Momentum: profile.Momentum * (factors.Momentum ?? 1),
+    Volume: profile.Volume * (factors.Volume ?? 1),
+    PriceAction: profile.PriceAction * (factors.PriceAction ?? 1),
+    Risk: profile.Risk * (factors.Risk ?? 1),
+  });
+}
+
+function deriveRegimeProfile(
+  baseProfile: AiScoreWeightProfile,
+  regime: MarketRegime,
+  assessment: ReturnType<typeof evaluateBacktestResult>,
+) {
+  const trendBias = clamp(1 + assessment.overallSignal * 0.32 + assessment.bucketEdge * 0.18, 0.9, 1.12);
+  const momentumBias = clamp(1 + assessment.shortTermSignal * 0.42 + assessment.midBandSignal * 0.12, 0.9, 1.12);
+  const volumeBias = clamp(1 + assessment.midBandSignal * 0.32 + assessment.bucketEdge * 0.08, 0.9, 1.12);
+  const priceActionBias = clamp(1 + assessment.bucketEdge * 0.36 + assessment.shortTermSignal * 0.1, 0.9, 1.12);
+  const riskBias = clamp(1 + (-assessment.riskSignal) * 0.5, 0.9, 1.12);
+
+  switch (regime) {
+    case "uptrend":
+      return mixProfile(baseProfile, {
+        Trend: trendBias * 1.08,
+        Momentum: momentumBias * 1.05,
+        Volume: volumeBias * 0.98,
+        PriceAction: priceActionBias * 1.06,
+        Risk: riskBias * 0.95,
+      });
+    case "downtrend":
+      return mixProfile(baseProfile, {
+        Trend: trendBias * 0.94,
+        Momentum: momentumBias * 0.96,
+        Volume: volumeBias * 1.02,
+        PriceAction: priceActionBias * 0.95,
+        Risk: riskBias * 1.08,
+      });
+    case "range":
+      return mixProfile(baseProfile, {
+        Trend: trendBias * 0.9,
+        Momentum: momentumBias * 1.1,
+        Volume: volumeBias * 1.08,
+        PriceAction: priceActionBias * 1.04,
+        Risk: riskBias * 1.02,
+      });
+    case "highVolatility":
+      return mixProfile(baseProfile, {
+        Trend: trendBias * 0.88,
+        Momentum: momentumBias * 1.02,
+        Volume: volumeBias * 1.05,
+        PriceAction: priceActionBias * 0.9,
+        Risk: riskBias * 1.12,
+      });
+    case "lowVolatility":
+      return mixProfile(baseProfile, {
+        Trend: trendBias * 1.1,
+        Momentum: momentumBias * 0.95,
+        Volume: volumeBias * 0.94,
+        PriceAction: priceActionBias * 1.1,
+        Risk: riskBias * 0.92,
+      });
+    default:
+      return normalizeProfile(baseProfile);
+  }
+}
+
+export function selectAiScoreWeightProfileForStock(
+  stock: Pick<Stock, "baselineTrend" | "chartData" | "marketData" | "marketContext">,
+  store?: Partial<AiScoreWeightStore> | null,
+) {
+  const normalizedStore = normalizeStore(store);
+  const regime = inferMarketRegimeFromStock(stock);
+
+  return {
+    regime,
+    profile: normalizedStore.regimes[regime] ?? normalizedStore.defaultProfile,
+    store: normalizedStore,
+  };
+}
+
 export function deriveAiScoreWeightProfileFromBacktest(
   result: AiScoreBacktestResult,
   currentProfile?: Partial<AiScoreWeightProfile> | null,
@@ -282,15 +425,14 @@ export function deriveMarketRegimeWeightStoresFromBacktest(result: AiScoreBackte
   const baseStore = normalizeStore(currentStore);
   const baseProfile = baseStore.defaultProfile;
   const derivedDefaultProfile = deriveAiScoreWeightProfileFromBacktest(result, baseProfile);
+  const assessment = evaluateBacktestResult(result);
   const derivedRegimes = MARKET_REGIMES.reduce((accumulator, regime) => {
     const label = getMarketRegimeLabel(regime);
-    const regimeNotes = [
-      `regime=${label}`,
-      ...(derivedDefaultProfile.notes ?? []),
-    ];
+    const regimeProfile = deriveRegimeProfile(derivedDefaultProfile, regime, assessment);
+    const regimeNotes = [`regime=${label}`, ...(derivedDefaultProfile.notes ?? [])];
 
     accumulator[regime] = normalizeProfile({
-      ...derivedDefaultProfile,
+      ...regimeProfile,
       updatedAt: new Date().toISOString(),
       notes: regimeNotes,
     });
@@ -333,18 +475,7 @@ export function applyAiScoreWeightProfile(baseWeights: AiScoreWeights, profile: 
 }
 
 export function loadAiScoreWeightProfile(filePath = resolveAiScoreWeightProfilePath()) {
-  const fs = getFs();
-
-  if (!fs.existsSync(filePath)) {
-    return DEFAULT_AI_SCORE_WEIGHT_PROFILE;
-  }
-
-  try {
-    const parsed = JSON.parse(fs.readFileSync(filePath, "utf8")) as Partial<AiScoreWeightProfile>;
-    return normalizeProfile(parsed);
-  } catch {
-    return DEFAULT_AI_SCORE_WEIGHT_PROFILE;
-  }
+  return loadAiScoreWeightStore(filePath).defaultProfile;
 }
 
 export function saveAiScoreWeightProfile(profile: AiScoreWeightProfile, filePath = resolveAiScoreWeightProfilePath()) {
