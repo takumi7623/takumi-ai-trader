@@ -1,4 +1,8 @@
 import type { AiScoreWeights, Tepou30BacktestMetrics } from "../types";
+import {
+  applyAiScoreWeightProfile,
+  loadAiScoreWeightProfile,
+} from "../backtest/weightProfile";
 
 export type WeightOptimizerBacktestInput = Pick<
   Tepou30BacktestMetrics,
@@ -50,10 +54,24 @@ function buildNotes(backtest?: WeightOptimizerBacktestInput) {
 }
 
 export function optimizeAiScoreWeights(input: WeightOptimizerInput): WeightOptimizerResult {
+  const profile = loadAiScoreWeightProfile();
+  const profileAdjustedWeights = applyAiScoreWeightProfile(input.currentWeights, profile);
+
+  if (!input.backtest) {
+    return {
+      weights: profileAdjustedWeights,
+      changed: JSON.stringify(profileAdjustedWeights) !== JSON.stringify(input.currentWeights),
+      notes: [
+        `Loaded AI score weight profile from weights.json (${profile.updatedAt}).`,
+      ],
+      backtest: input.backtest,
+    };
+  }
+
   return {
-    weights: cloneWeights(input.currentWeights),
-    changed: false,
-    notes: buildNotes(input.backtest),
+    weights: profileAdjustedWeights,
+    changed: JSON.stringify(profileAdjustedWeights) !== JSON.stringify(input.currentWeights),
+    notes: buildNotes(input.backtest).concat(`Loaded AI score weight profile from weights.json (${profile.updatedAt}).`),
     backtest: input.backtest,
   };
 }
