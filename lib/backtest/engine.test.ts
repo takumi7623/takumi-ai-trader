@@ -68,6 +68,7 @@ test("runAiScoreBacktest aggregates score buckets, holding periods, sectors, and
   assert.equal(result.scoreBuckets.length, 5);
   assert.equal(result.holdingPeriods.length, 5);
   assert.equal(result.sectors.length >= 1, true);
+  assert.equal(result.regimes.length >= 1, true);
   assert.equal(result.scoreBuckets.every((bucket) => typeof bucket.winRate === "number"), true);
   assert.equal(result.holdingPeriods.every((period) => [1, 3, 5, 10, 20].includes(period.holdingPeriodDays)), true);
   assert.equal(result.totals.totalTrades, result.trades.length);

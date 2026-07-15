@@ -1,5 +1,5 @@
 import type { AiScoreWeights, Stock } from "../types";
-import type { AiScoreBacktestResult } from "./types";
+import type { AiScoreBacktestResult, AiScoreBacktestRegimeSummary } from "./types";
 
 export type MarketRegime = "uptrend" | "downtrend" | "range" | "highVolatility" | "lowVolatility";
 
@@ -306,13 +306,30 @@ function mixProfile(
 function deriveRegimeProfile(
   baseProfile: AiScoreWeightProfile,
   regime: MarketRegime,
-  assessment: ReturnType<typeof evaluateBacktestResult>,
+  assessment: ReturnType<typeof evaluateBacktestResult> | AiScoreBacktestRegimeSummary,
 ) {
-  const trendBias = clamp(1 + assessment.overallSignal * 0.32 + assessment.bucketEdge * 0.18, 0.9, 1.12);
-  const momentumBias = clamp(1 + assessment.shortTermSignal * 0.42 + assessment.midBandSignal * 0.12, 0.9, 1.12);
-  const volumeBias = clamp(1 + assessment.midBandSignal * 0.32 + assessment.bucketEdge * 0.08, 0.9, 1.12);
-  const priceActionBias = clamp(1 + assessment.bucketEdge * 0.36 + assessment.shortTermSignal * 0.1, 0.9, 1.12);
-  const riskBias = clamp(1 + (-assessment.riskSignal) * 0.5, 0.9, 1.12);
+  const overallSignal = "overallSignal" in assessment
+    ? assessment.overallSignal
+    : clamp(
+      ((assessment.winRate - 50) / 50) * 0.45
+        + ((assessment.averageProfit - Math.abs(assessment.averageLoss)) / 10) * 0.25
+        + ((assessment.profitFactor - 1) * 0.12)
+        - ((assessment.maxDrawdown / 100) * 0.18),
+      -0.2,
+      0.2,
+    );
+  const bucketEdge = "bucketEdge" in assessment ? assessment.bucketEdge : clamp((assessment.winRate - 50) / 100, -0.18, 0.18);
+  const shortTermSignal = "shortTermSignal" in assessment ? assessment.shortTermSignal : clamp((assessment.averageReturn / 10), -0.14, 0.14);
+  const midBandSignal = "midBandSignal" in assessment ? assessment.midBandSignal : clamp((assessment.averageProfit - assessment.averageLoss) / 20, -0.12, 0.12);
+  const riskSignal = "riskSignal" in assessment
+    ? assessment.riskSignal
+    : clamp(-(assessment.maxDrawdown / 100) * 0.55 - Math.min(0.1, Math.max(0, 1 - assessment.profitFactor) * 0.08), -0.16, 0.06);
+
+  const trendBias = clamp(1 + overallSignal * 0.32 + bucketEdge * 0.18, 0.9, 1.12);
+  const momentumBias = clamp(1 + shortTermSignal * 0.42 + midBandSignal * 0.12, 0.9, 1.12);
+  const volumeBias = clamp(1 + midBandSignal * 0.32 + bucketEdge * 0.08, 0.9, 1.12);
+  const priceActionBias = clamp(1 + bucketEdge * 0.36 + shortTermSignal * 0.1, 0.9, 1.12);
+  const riskBias = clamp(1 + (-riskSignal) * 0.5, 0.9, 1.12);
 
   switch (regime) {
     case "uptrend":
@@ -426,9 +443,12 @@ export function deriveMarketRegimeWeightStoresFromBacktest(result: AiScoreBackte
   const baseProfile = baseStore.defaultProfile;
   const derivedDefaultProfile = deriveAiScoreWeightProfileFromBacktest(result, baseProfile);
   const assessment = evaluateBacktestResult(result);
+  const regimeAssessments = new Map(
+    (result.regimes ?? []).map((summary) => [summary.regime, summary] as const),
+  );
   const derivedRegimes = MARKET_REGIMES.reduce((accumulator, regime) => {
     const label = getMarketRegimeLabel(regime);
-    const regimeProfile = deriveRegimeProfile(derivedDefaultProfile, regime, assessment);
+    const regimeProfile = deriveRegimeProfile(derivedDefaultProfile, regime, regimeAssessments.get(regime) ?? assessment);
     const regimeNotes = [`regime=${label}`, ...(derivedDefaultProfile.notes ?? [])];
 
     accumulator[regime] = normalizeProfile({

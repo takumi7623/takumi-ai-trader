@@ -1,4 +1,5 @@
 import type { Stock, StockCandle, StockTimeframe, TradeSignal } from "../types";
+import type { MarketRegime } from "./weightProfile";
 
 export type BacktestHoldingPeriod = 1 | 3 | 5 | 10 | 20;
 
@@ -12,6 +13,7 @@ export type AiScoreBacktestTradeOutcome = {
   name: string;
   sector: string;
   timeframe: StockTimeframe;
+  regime: MarketRegime;
   entryDate: string;
   exitDate: string;
   holdingPeriodDays: BacktestHoldingPeriod;
@@ -53,12 +55,24 @@ export type AiScoreBacktestSectorSummary = {
   averageProfit: number;
 };
 
+export type AiScoreBacktestRegimeSummary = {
+  regime: MarketRegime;
+  totalTrades: number;
+  winRate: number;
+  averageProfit: number;
+  averageLoss: number;
+  profitFactor: number;
+  maxDrawdown: number;
+  averageReturn: number;
+};
+
 export type AiScoreBacktestResult = {
   generatedAt: string;
   trades: AiScoreBacktestTradeOutcome[];
   scoreBuckets: AiScoreBacktestBucketSummary[];
   holdingPeriods: AiScoreBacktestHoldingSummary[];
   sectors: AiScoreBacktestSectorSummary[];
+  regimes: AiScoreBacktestRegimeSummary[];
   totals: {
     totalTrades: number;
     winRate: number;

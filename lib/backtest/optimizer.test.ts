@@ -39,6 +39,13 @@ function buildBacktestResult(): AiScoreBacktestResult {
       { sector: "輸送用機器", totalTrades: 10, winRate: 67, averageProfit: 1.8 },
       { sector: "電気機器", totalTrades: 8, winRate: 63, averageProfit: 1.5 },
     ],
+    regimes: [
+      { regime: "uptrend", totalTrades: 18, winRate: 69, averageProfit: 2.1, averageLoss: -1.0, profitFactor: 2.1, maxDrawdown: 4.8, averageReturn: 1.6 },
+      { regime: "downtrend", totalTrades: 10, winRate: 44, averageProfit: 1.0, averageLoss: -1.6, profitFactor: 1.1, maxDrawdown: 9.6, averageReturn: -0.2 },
+      { regime: "range", totalTrades: 8, winRate: 56, averageProfit: 1.3, averageLoss: -1.1, profitFactor: 1.3, maxDrawdown: 6.8, averageReturn: 0.5 },
+      { regime: "highVolatility", totalTrades: 6, winRate: 48, averageProfit: 1.5, averageLoss: -1.8, profitFactor: 1.0, maxDrawdown: 12.2, averageReturn: -0.1 },
+      { regime: "lowVolatility", totalTrades: 6, winRate: 62, averageProfit: 1.4, averageLoss: -0.9, profitFactor: 1.6, maxDrawdown: 3.2, averageReturn: 0.8 },
+    ],
     totals: {
       totalTrades: 48,
       winRate: 64.2,

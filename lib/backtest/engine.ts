@@ -5,10 +5,12 @@ import type {
   AiScoreBacktestHoldingSummary,
   AiScoreBacktestInput,
   AiScoreBacktestResult,
+  AiScoreBacktestRegimeSummary,
   AiScoreBacktestSectorSummary,
   AiScoreBacktestTradeOutcome,
   BacktestHoldingPeriod,
 } from "./types";
+import { inferMarketRegimeFromStock } from "./weightProfile";
 
 const SCORE_BUCKETS = [
   { label: "90-100", min: 90, max: 100 },
@@ -142,6 +144,7 @@ function buildTrade(
 ): AiScoreBacktestTradeOutcome | null {
   const historicalStock = createHistoricalStock(stock, candles, entryIndex);
   const analysis = analyzeStock({ query: stock.code, stock: historicalStock });
+  const regime = inferMarketRegimeFromStock(historicalStock);
 
   if (analysis.signal !== "BUY" || analysis.score < DEFAULT_ENTRY_SCORE) {
     return null;
@@ -195,6 +198,7 @@ function buildTrade(
     name: stock.name,
     sector: stock.sector,
     timeframe: stock.timeframe ?? "1d",
+    regime,
     entryDate: entryCandle.time,
     exitDate: candles[exitIndex]?.time ?? entryCandle.time,
     holdingPeriodDays,
@@ -265,6 +269,30 @@ function summarizeSector(trades: AiScoreBacktestTradeOutcome[], sector: string):
   };
 }
 
+function summarizeRegime(trades: AiScoreBacktestTradeOutcome[], regime: AiScoreBacktestRegimeSummary["regime"]): AiScoreBacktestRegimeSummary {
+  const regimeTrades = trades.filter((trade) => trade.regime === regime);
+  const returns = regimeTrades.map((trade) => trade.returnPercent);
+  const stats = summarizeReturns(returns);
+  const equityPoints: EquityPoint[] = [];
+  let equity = 100;
+
+  for (const trade of regimeTrades) {
+    equity *= 1 + trade.returnPercent / 100;
+    equityPoints.push({ date: trade.exitDate, equity });
+  }
+
+  return {
+    regime,
+    totalTrades: stats.totalTrades,
+    winRate: stats.winRate,
+    averageProfit: stats.averageProfit,
+    averageLoss: stats.averageLoss,
+    profitFactor: stats.profitFactor,
+    maxDrawdown: calculateMaxDrawdown(equityPoints),
+    averageReturn: stats.averageReturn,
+  };
+}
+
 export function runAiScoreBacktest(inputs: AiScoreBacktestInput[]): AiScoreBacktestResult {
   const trades: AiScoreBacktestTradeOutcome[] = [];
 
@@ -291,6 +319,7 @@ export function runAiScoreBacktest(inputs: AiScoreBacktestInput[]): AiScoreBackt
   });
 
   const sectors = Array.from(new Set(trades.map((trade) => trade.sector))).sort().map((sector) => summarizeSector(trades, sector));
+  const regimes = Array.from(new Set(trades.map((trade) => trade.regime))).sort().map((regime) => summarizeRegime(trades, regime));
 
   const totalsStats = summarizeReturns(trades.map((trade) => trade.returnPercent));
   const equityPoints: EquityPoint[] = [];
@@ -306,6 +335,7 @@ export function runAiScoreBacktest(inputs: AiScoreBacktestInput[]): AiScoreBackt
     scoreBuckets,
     holdingPeriods,
     sectors,
+    regimes,
     totals: {
       totalTrades: totalsStats.totalTrades,
       winRate: totalsStats.winRate,
