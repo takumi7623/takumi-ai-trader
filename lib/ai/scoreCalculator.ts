@@ -1111,6 +1111,22 @@ function resolveRuntimeLearningInputs(stock: Stock, options?: AnalyzeStockOption
   };
 }
 
+function resolveLearningProfileApplication(learningProfile: AiLearningProfile, candlesLength: number) {
+  const hasMinimumCandles = candlesLength >= 30;
+
+  return {
+    technicalWeight: learningProfile.technicalWeight,
+    newsWeight: learningProfile.newsWeight,
+    volumeWeight: learningProfile.volumeWeight,
+    gapWeight: learningProfile.gapWeight,
+    applyTechnicalWeight: true,
+    applyNewsWeight: true,
+    applyVolumeWeight: hasMinimumCandles,
+    applyGapWeight: hasMinimumCandles,
+    disabledReason: hasMinimumCandles ? null : "insufficient-candles(<30)",
+  };
+}
+
 export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions): AiScoreResult {
   const query = input.query.trim();
   const stock = input.stock ?? buildFallbackStock(query);
@@ -1119,6 +1135,7 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
   const previous = candles[candles.length - 2];
   const latestPrice = stock.marketData?.price ?? latest?.close ?? 1000;
   const { baseWeights, learningProfile, weightStore } = resolveRuntimeLearningInputs(stock, options);
+  const learningProfileApplication = resolveLearningProfileApplication(learningProfile, candles.length);
   const { regime, profile: marketRegimeProfile } = selectAiScoreWeightProfileForStock(stock, weightStore);
   const regimeWeights = applyAiScoreWeightProfile(baseWeights, marketRegimeProfile);
   const weights = buildAdaptiveWeights(regimeWeights, stock.timeframe, candles.length);
@@ -1255,7 +1272,7 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
     const gapInsight = buildGapScore(candles, latestClose);
     if (gapInsight.reason) {
       reasons.push(gapInsight.reason);
-      const weightedGapScore = Math.round(Math.abs(gapInsight.score) * learningProfile.gapWeight);
+      const weightedGapScore = Math.round(Math.abs(gapInsight.score) * learningProfileApplication.gapWeight);
       if (gapInsight.bullish) {
         score += weightedGapScore;
         bullishVotes += 1;
@@ -1511,7 +1528,7 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
         : volumeMomentum >= 0.3 ? 1
         : volumeMomentum <= -0.2 ? -2
         : 0;
-    const profileVolumeComponent = Math.round(volumeProfile.score * learningProfile.volumeWeight);
+    const profileVolumeComponent = Math.round(volumeProfile.score * learningProfileApplication.volumeWeight);
     const volumeCompositeScore = clamp(
       Math.round(
         (
@@ -1921,7 +1938,7 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
   const newsSentimentScaled = clamp((newsSentimentScore / 100) * (newsSentimentConfidence / 100) * 14, -12, 12);
   const newsComponentDelta = (newsComponentScore - 50) * 0.18;
   const newsCompositeScore = clamp(
-    (newsSentimentScaled + newsComponentDelta + newsImpact.score) * learningProfile.newsWeight,
+    (newsSentimentScaled + newsComponentDelta + newsImpact.score) * learningProfileApplication.newsWeight,
     -16,
     24,
   );
@@ -1955,8 +1972,8 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
     reasons.push(`過去${oneYearBacktest.periodDays}日（最大3年）の実データ検証では${oneYearBacktest.totalTrades}トレード、勝率${oneYearBacktest.winRate.toFixed(2)}%、期待値${oneYearBacktest.expectedValuePercent.toFixed(2)}%、PF${oneYearBacktest.profitFactor.toFixed(2)}でした。`);
   }
 
-  const technicalBlend = clamp(0.6 * learningProfile.technicalWeight, 0.4, 0.78);
-  const baseBlend = clamp(0.34 * learningProfile.technicalWeight, 0.2, 0.45);
+  const technicalBlend = clamp(0.6 * learningProfileApplication.technicalWeight, 0.4, 0.78);
+  const baseBlend = clamp(0.34 * learningProfileApplication.technicalWeight, 0.2, 0.45);
   const adjustedRawScore =
     baseScore * baseBlend
       + technicalWeighted * technicalBlend
