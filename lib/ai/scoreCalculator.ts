@@ -1095,6 +1095,22 @@ function buildFallbackStock(query: string): Stock {
   };
 }
 
+function resolveRuntimeLearningInputs(stock: Stock, options?: AnalyzeStockOptions) {
+  // Keep the current priority order unchanged:
+  // - tepou30/runtime overrides are supplied via options
+  // - stock-level learning profile fallback is supplied by API response
+  // - regime-aware profile always comes from weights.json store
+  const baseWeights = normalizeWeights(options?.weights);
+  const learningProfile = normalizeLearningProfile(options?.learningProfile ?? stock.analysisLearningProfile);
+  const weightStore = loadAiScoreWeightStore();
+
+  return {
+    baseWeights,
+    learningProfile,
+    weightStore,
+  };
+}
+
 export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions): AiScoreResult {
   const query = input.query.trim();
   const stock = input.stock ?? buildFallbackStock(query);
@@ -1102,9 +1118,7 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
   const latest = candles[candles.length - 1];
   const previous = candles[candles.length - 2];
   const latestPrice = stock.marketData?.price ?? latest?.close ?? 1000;
-  const baseWeights = normalizeWeights(options?.weights);
-  const learningProfile = normalizeLearningProfile(options?.learningProfile ?? stock.analysisLearningProfile);
-  const weightStore = loadAiScoreWeightStore();
+  const { baseWeights, learningProfile, weightStore } = resolveRuntimeLearningInputs(stock, options);
   const { regime, profile: marketRegimeProfile } = selectAiScoreWeightProfileForStock(stock, weightStore);
   const regimeWeights = applyAiScoreWeightProfile(baseWeights, marketRegimeProfile);
   const weights = buildAdaptiveWeights(regimeWeights, stock.timeframe, candles.length);
