@@ -1113,6 +1113,8 @@ function resolveRuntimeLearningInputs(stock: Stock, options?: AnalyzeStockOption
 
 function resolveLearningProfileApplication(learningProfile: AiLearningProfile, candlesLength: number) {
   const hasMinimumCandles = candlesLength >= 30;
+  const canApplyVolumeWeight = candlesLength >= 10;
+  const canApplyGapWeight = candlesLength >= 2;
 
   return {
     technicalWeight: learningProfile.technicalWeight,
@@ -1121,8 +1123,8 @@ function resolveLearningProfileApplication(learningProfile: AiLearningProfile, c
     gapWeight: learningProfile.gapWeight,
     applyTechnicalWeight: true,
     applyNewsWeight: true,
-    applyVolumeWeight: hasMinimumCandles,
-    applyGapWeight: hasMinimumCandles,
+    applyVolumeWeight: canApplyVolumeWeight,
+    applyGapWeight: canApplyGapWeight,
     disabledReason: hasMinimumCandles ? null : "insufficient-candles(<30)",
   };
 }
@@ -1788,6 +1790,35 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
     } else {
       bearishVotes += 1;
     }
+
+    const gapInsight = learningProfileApplication.applyGapWeight
+      ? buildGapScore(candles, latestClose)
+      : { score: 0, reason: "", bullish: false, bearish: false };
+    if (gapInsight.reason) {
+      reasons.push(gapInsight.reason);
+      const weightedGapScore = Math.round(Math.abs(gapInsight.score) * learningProfileApplication.gapWeight);
+      if (gapInsight.bullish) {
+        score += weightedGapScore;
+        bullishVotes += 1;
+      } else if (gapInsight.bearish) {
+        score -= weightedGapScore;
+        bearishVotes += 1;
+      }
+    }
+
+    const volumeProfile = learningProfileApplication.applyVolumeWeight
+      ? buildVolumeProfile(candles, latest?.volume ?? 0)
+      : { score: 0, reason: "", bullish: false, bearish: false, surgeRatio: 1, trendPercent: 0 };
+    if (volumeProfile.reason) {
+      reasons.push(volumeProfile.reason);
+    }
+    const profileVolumeComponent = Math.round(volumeProfile.score * learningProfileApplication.volumeWeight);
+    const volumeCompositeScore = clamp(Math.round(profileVolumeComponent * 0.6), -14, 14);
+    score += volumeCompositeScore;
+    if (volumeCompositeScore !== 0) {
+      reasons.push(`出来高総合スコアは${volumeCompositeScore}で、短期データ範囲で学習済み出来高重みを反映しています。`);
+    }
+
     reasons.push("ローソク足が十分でないため、当日値動き・日中ボラティリティ・ニュースを中心に暫定評価しています。");
   }
 
