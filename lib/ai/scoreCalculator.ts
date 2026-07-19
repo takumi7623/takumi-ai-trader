@@ -729,6 +729,7 @@ function decideJudgment(score: number): AiJudgment {
 }
 
 function decideSignalEnhanced(params: {
+  timeframe: Stock["timeframe"];
   score: number;
   winRate: number;
   expectedValuePercent: number;
@@ -742,6 +743,7 @@ function decideSignalEnhanced(params: {
   trendAlignment: number;
 }) {
   const {
+    timeframe,
     score,
     winRate,
     expectedValuePercent,
@@ -802,6 +804,16 @@ function decideSignalEnhanced(params: {
     );
   const adaptiveScoreFloor = minScore + (newsAlignment < -0.15 ? 3 : 0) + (riskPressure >= 0.45 ? 2 : 0);
   const adaptiveTrendFloor = minTrendConsensus + (newsAlignment < -0.15 ? 3 : 0) + (riskPressure >= 0.45 ? 2 : 0);
+  // 15mは75-80帯のBUY誤判定が多いため、BUY下限を明示的に80へ引き上げる。
+  const timeframeBuyScoreFloor = timeframe === "15m" ? 80 : minScore;
+  const effectiveBuyScoreFloor = Math.max(adaptiveScoreFloor, timeframeBuyScoreFloor);
+  // 15mの高スコア帯でlossRiskが3-4%かつ高め(>3.5%)のケースは誤判定が多いためBUYを抑制する。
+  const blockHighRisk15mHighScoreBuy =
+    timeframe === "15m"
+    && score >= 85
+    && lossRiskPercent >= 3
+    && lossRiskPercent < 4
+    && lossRiskPercent > 3.5;
   const buyRecovery =
     expectedValuePercent >= (minExpected + 0.25)
     && riskRewardRatio >= (minRr + 0.05)
@@ -821,11 +833,18 @@ function decideSignalEnhanced(params: {
     && buyEdgeScore >= buyEdgeFloor
     && !confidenceScoreOnlyLift
     && !buySuppression
+    && !blockHighRisk15mHighScoreBuy
   ) {
     return "BUY";
   }
 
-  if (buyRecovery && buyEdgeScore >= (buyEdgeFloor + 1) && !confidenceScoreOnlyLift && !buySuppression) {
+  if (
+    buyRecovery
+    && buyEdgeScore >= (buyEdgeFloor + 1)
+    && !confidenceScoreOnlyLift
+    && !buySuppression
+    && !blockHighRisk15mHighScoreBuy
+  ) {
     return "BUY";
   }
 
@@ -2511,6 +2530,7 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
     ? Number(calibratedFinalScore.toFixed(1))
     : roundedScore;
   const signal = decideSignalEnhanced({
+    timeframe: stock.timeframe,
     score: roundedScore,
     winRate,
     expectedValuePercent,
