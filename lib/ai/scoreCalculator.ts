@@ -55,6 +55,12 @@ const DEFAULT_LEARNING_PROFILE: AiLearningProfile = {
 type AnalyzeStockOptions = {
   weights?: Partial<AiScoreWeights>;
   learningProfile?: Partial<AiLearningProfile>;
+  debugTrace?: boolean;
+  tuning?: {
+    adjustedBlendFloorMin?: number;
+    adjustedBlendFloorMax?: number;
+    softFloorPassthrough?: number;
+  };
 };
 
 type BacktestSummary = {
@@ -789,6 +795,17 @@ function decideSignalEnhanced(params: {
     - Math.max(0, lossRiskPercent - 4.2) * 10
     + trendAlignmentNorm * 4
     + newsAlignment * 3;
+  const planG2LowerHalfQ2BuyBlock =
+    timeframe === "15m"
+    && score >= 85
+    && expectedValuePercent * 26
+      + (winRate - 50) * 1.7
+      + (riskRewardRatio - 1) * 14
+      - Math.max(0, lossRiskPercent - 4.2) * 10 >= 93.4
+    && expectedValuePercent * 26
+      + (winRate - 50) * 1.7
+      + (riskRewardRatio - 1) * 14
+      - Math.max(0, lossRiskPercent - 4.2) * 10 < 99.15;
   const weakExpectedProfile = expectedValuePercent < (minExpected + (elevatedScoreBand ? 0.02 : 0.05));
   const lowWinRateProfile = winRate < (minWinRate - (elevatedScoreBand ? 1 : 0));
   const weakRrProfile = riskRewardRatio < (minRr + (elevatedScoreBand ? 0 : 0.02));
@@ -818,7 +835,7 @@ function decideSignalEnhanced(params: {
     expectedValuePercent >= (minExpected + 0.25)
     && riskRewardRatio >= (minRr + 0.05)
     && winRate >= (minWinRate + 1)
-    && score >= (minScore - 3)
+    && score >= (effectiveBuyScoreFloor - 3)
     && trendConsensusScore >= (minTrendConsensus - 3)
     && bullishAgreement
     && confidenceFactor >= 0.2
@@ -828,12 +845,13 @@ function decideSignalEnhanced(params: {
     expectedValuePercent >= minExpected
     && riskRewardRatio >= minRr
     && winRate >= minWinRate
-    && score >= adaptiveScoreFloor
+    && score >= effectiveBuyScoreFloor
     && trendConsensusScore >= adaptiveTrendFloor
     && buyEdgeScore >= buyEdgeFloor
     && !confidenceScoreOnlyLift
     && !buySuppression
     && !blockHighRisk15mHighScoreBuy
+    && !planG2LowerHalfQ2BuyBlock
   ) {
     return "BUY";
   }
@@ -844,6 +862,7 @@ function decideSignalEnhanced(params: {
     && !confidenceScoreOnlyLift
     && !buySuppression
     && !blockHighRisk15mHighScoreBuy
+    && !planG2LowerHalfQ2BuyBlock
   ) {
     return "BUY";
   }
@@ -2116,7 +2135,19 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
   const backtestReliability = clamp(oneYearBacktest.totalTrades / 80, 0, 1);
   const backtestBlend = 0.5 + backtestReliability * 0.35;
   const productionBlend = 0.3 - backtestReliability * 0.1;
-  const adjustedBlend = clamp(1 - backtestBlend - productionBlend, 0, 1);
+  const learningShift =
+    Math.abs(learningProfileApplication.technicalWeight - 1)
+    + Math.abs(learningProfileApplication.newsWeight - 1)
+    + Math.abs(learningProfileApplication.volumeWeight - 1)
+    + Math.abs(learningProfileApplication.gapWeight - 1);
+  const adjustedBlendFloorMin = clamp(options?.tuning?.adjustedBlendFloorMin ?? 0.03, 0, 0.5);
+  const adjustedBlendFloorMax = clamp(
+    options?.tuning?.adjustedBlendFloorMax ?? 0.12,
+    adjustedBlendFloorMin,
+    0.6,
+  );
+  const adjustedBlendFloor = clamp(0.03 + learningShift * 0.35, adjustedBlendFloorMin, adjustedBlendFloorMax);
+  const adjustedBlend = clamp(1 - backtestBlend - productionBlend, adjustedBlendFloor, 1);
   const blendOverflow = Math.max(0, backtestBlend + productionBlend + adjustedBlend - 1);
   const normalizedBacktestBlend = clamp(backtestBlend - blendOverflow, 0, 1);
   const technicalPathCarry = resolveTechnicalPathCarry({
@@ -2132,10 +2163,13 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
   const productionPathScore = productionAiScore + pathSharedOffset;
   const adjustedPathScore = adjustedScore + pathSharedOffset;
   const backtestPathScore = backtestScore + pathSharedOffset;
+  const productionContribution = productionPathScore * productionBlend;
+  const adjustedContribution = adjustedPathScore * adjustedBlend;
+  const backtestContribution = backtestPathScore * normalizedBacktestBlend;
   const blendedRawScore = (
-    productionPathScore * productionBlend
-    + adjustedPathScore * adjustedBlend
-    + backtestPathScore * normalizedBacktestBlend
+    productionContribution
+    + adjustedContribution
+    + backtestContribution
   );
   // Shrink extreme tails so score behavior is more consistent across the full universe.
   const stabilizedScore = 50 + (blendedRawScore - 50) * 1.02 + (marketRegimeScore - 50) * 0.14;
@@ -2143,7 +2177,12 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
   const expectancyFloorBoost = backtestExpectedRaw > 0 && backtestRrRaw >= 1.4 && marketRegimeScore >= 42
     ? clamp(backtestExpectedRaw * 2 + Math.max(0, backtestWinRateRaw - 50) * 0.08, 0, 6)
     : 0;
-  let finalScore = clamp(stabilizedScore, bearishFloor + expectancyFloorBoost, 100);
+  const floorAnchor = bearishFloor + expectancyFloorBoost;
+  const floorPassthrough = clamp(options?.tuning?.softFloorPassthrough ?? 0.28, 0.05, 0.95);
+  let finalScore = stabilizedScore >= floorAnchor
+    ? stabilizedScore
+    : floorAnchor + (stabilizedScore - floorAnchor) * floorPassthrough;
+  finalScore = clamp(finalScore, 0, 100);
   const weakDowntrendSetup =
     stock.baselineTrend === "volatile"
     && trendAssessment.direction === "下降"
@@ -2526,9 +2565,7 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
     aiReason.push(`• ${consensusReasonForAi}`);
   }
   const roundedScore = Math.round(calibratedFinalScore);
-  const displayScore = roundedScore >= 90
-    ? Number(calibratedFinalScore.toFixed(1))
-    : roundedScore;
+  const displayScore = Number(calibratedFinalScore.toFixed(1));
   const signal = decideSignalEnhanced({
     timeframe: stock.timeframe,
     score: roundedScore,
@@ -2550,6 +2587,47 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
     expectedValuePercent,
   });
   const reasonInsights = buildReasonInsights(reasons, roundedScore, signal);
+
+  const scoreDebug = options?.debugTrace
+    ? {
+      learningProfile: {
+        technicalWeight: learningProfileApplication.technicalWeight,
+        newsWeight: learningProfileApplication.newsWeight,
+        volumeWeight: learningProfileApplication.volumeWeight,
+        gapWeight: learningProfileApplication.gapWeight,
+      },
+      adjustedPath: {
+        baseBlend: Number(baseBlend.toFixed(6)),
+        technicalBlend: Number(technicalBlend.toFixed(6)),
+        newsCompositeScore: Number(newsCompositeScore.toFixed(6)),
+        adjustedRawScore: Number(adjustedRawScore.toFixed(6)),
+        adjustedScore: Number(adjustedScore.toFixed(6)),
+      },
+      blend: {
+        backtestReliability: Number(backtestReliability.toFixed(6)),
+        backtestBlend: Number(backtestBlend.toFixed(6)),
+        productionBlend: Number(productionBlend.toFixed(6)),
+        adjustedBlendFloorMin: Number(adjustedBlendFloorMin.toFixed(6)),
+        adjustedBlendFloorMax: Number(adjustedBlendFloorMax.toFixed(6)),
+        adjustedBlendFloor: Number(adjustedBlendFloor.toFixed(6)),
+        adjustedBlend: Number(adjustedBlend.toFixed(6)),
+        normalizedBacktestBlend: Number(normalizedBacktestBlend.toFixed(6)),
+        softFloorPassthrough: Number(floorPassthrough.toFixed(6)),
+      },
+      path: {
+        productionPathScore: Number(productionPathScore.toFixed(6)),
+        adjustedPathScore: Number(adjustedPathScore.toFixed(6)),
+        backtestPathScore: Number(backtestPathScore.toFixed(6)),
+        productionContribution: Number(productionContribution.toFixed(6)),
+        adjustedContribution: Number(adjustedContribution.toFixed(6)),
+        backtestContribution: Number(backtestContribution.toFixed(6)),
+        blendedRawScore: Number(blendedRawScore.toFixed(6)),
+        stabilizedScore: Number(stabilizedScore.toFixed(6)),
+        finalScoreBeforeRounding: Number(calibratedFinalScore.toFixed(6)),
+        displayScore,
+      },
+    }
+    : undefined;
 
   return {
     code: stock.code,
@@ -2584,6 +2662,7 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
     negativeFactors: reasonInsights.negativeFactors,
     reasonRanking: reasonInsights.reasonRanking,
     decisionReason: reasonInsights.decisionReason,
+    scoreDebug,
     chartData: stock.chartData,
     dataStatus: stock.dataStatus,
     dataReason: stock.dataReason,
