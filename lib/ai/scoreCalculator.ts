@@ -737,6 +737,7 @@ function decideJudgment(score: number): AiJudgment {
 function decideSignalEnhanced(params: {
   timeframe: Stock["timeframe"];
   score: number;
+  rawScore?: number;
   winRate: number;
   expectedValuePercent: number;
   riskRewardRatio: number;
@@ -751,6 +752,7 @@ function decideSignalEnhanced(params: {
   const {
     timeframe,
     score,
+    rawScore,
     winRate,
     expectedValuePercent,
     riskRewardRatio,
@@ -831,6 +833,12 @@ function decideSignalEnhanced(params: {
     && lossRiskPercent >= 3
     && lossRiskPercent < 4
     && lossRiskPercent > 3.5;
+  const blockLowEdge5mHighScoreBuy =
+    timeframe === "5m"
+    && (rawScore ?? score) >= 85
+    && lossRiskPercent >= 3
+    && lossRiskPercent < 4
+    && expectedValuePercent < 2.83;
   const buyRecovery =
     expectedValuePercent >= (minExpected + 0.25)
     && riskRewardRatio >= (minRr + 0.05)
@@ -851,6 +859,7 @@ function decideSignalEnhanced(params: {
     && !confidenceScoreOnlyLift
     && !buySuppression
     && !blockHighRisk15mHighScoreBuy
+    && !blockLowEdge5mHighScoreBuy
     && !planG2LowerHalfQ2BuyBlock
   ) {
     return "BUY";
@@ -862,6 +871,7 @@ function decideSignalEnhanced(params: {
     && !confidenceScoreOnlyLift
     && !buySuppression
     && !blockHighRisk15mHighScoreBuy
+    && !blockLowEdge5mHighScoreBuy
     && !planG2LowerHalfQ2BuyBlock
   ) {
     return "BUY";
@@ -2569,6 +2579,7 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
   const signal = decideSignalEnhanced({
     timeframe: stock.timeframe,
     score: roundedScore,
+    rawScore: calibratedFinalScore,
     winRate,
     expectedValuePercent,
     riskRewardRatio: effectiveRiskRewardRatio,
