@@ -6,6 +6,9 @@ import type {
   StockTimeframe,
 } from "./types";
 import { fetchJQuantsJson, JQuantsHttpError } from "./jquantsClient";
+import { resampleCanonicalBars } from "./intraday/resample";
+import { resolveIntradaySession } from "./intraday/session";
+import type { CanonicalIntradayBar } from "./intraday/canonicalTypes";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 
@@ -66,6 +69,278 @@ const JPX_META_OVERRIDES: Record<string, { name: string; sector: string }> = {
 const JPX_MASTER_META_TTL_MS = 6 * 60 * 60 * 1000;
 const STOCK_SNAPSHOT_DIR = path.join(process.cwd(), ".cache");
 const SCORE_HISTORY_CANDLES = 320;
+const MINUTE_LOOKBACK_DAYS = 14;
+
+type JpxMinuteRow = Record<string, unknown>;
+
+type JpxIntradayCandle = StockCandle & {
+  symbol: string;
+  tradeDate: string;
+  session: "morning" | "afternoon";
+  granularityMinutes: 1 | 5 | 15;
+  turnover: number;
+  observedAt: string;
+  receivedAt: string;
+  barState: "closed";
+  barStartAt: string;
+  barEndAt: string;
+  origin: {
+    kind: "canonical";
+    feed: "jquants-minute";
+    schemaVersion: 1;
+    sourceId: string;
+  };
+};
+
+function toJstIso(epochMs: number): string {
+  const jst = new Date(epochMs + 9 * 60 * 60 * 1000);
+  const year = jst.getUTCFullYear();
+  const month = String(jst.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(jst.getUTCDate()).padStart(2, "0");
+  const hour = String(jst.getUTCHours()).padStart(2, "0");
+  const minute = String(jst.getUTCMinutes()).padStart(2, "0");
+
+  return `${year}-${month}-${day}T${hour}:${minute}:00+09:00`;
+}
+
+function buildJstIsoAtMinute(tradeDate: string, hhmm: string): string {
+  return `${tradeDate}T${hhmm}:00+09:00`;
+}
+
+function addOneMinuteJstIso(iso: string): string {
+  const epoch = Date.parse(iso);
+  if (!Number.isFinite(epoch)) {
+    return iso;
+  }
+
+  return toJstIso(epoch + 60_000);
+}
+
+function normalizeJstTime(value: string): string {
+  const match = value.match(/^(\d{2}:\d{2})/);
+  return match ? match[1] : value.slice(0, 5);
+}
+
+function getRecentJstDates(limit: number): string[] {
+  const dates: string[] = [];
+  const now = new Date();
+  const jstNow = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+  const cursor = new Date(Date.UTC(jstNow.getUTCFullYear(), jstNow.getUTCMonth(), jstNow.getUTCDate()));
+
+  while (dates.length < limit) {
+    const dayOfWeek = cursor.getUTCDay();
+    if (dayOfWeek !== 0 && dayOfWeek !== 6) {
+      const year = cursor.getUTCFullYear();
+      const month = String(cursor.getUTCMonth() + 1).padStart(2, "0");
+      const day = String(cursor.getUTCDate()).padStart(2, "0");
+      dates.push(`${year}-${month}-${day}`);
+    }
+
+    cursor.setUTCDate(cursor.getUTCDate() - 1);
+  }
+
+  return dates;
+}
+
+function makeJpxMinuteSourceId(code: string, tradeDate: string) {
+  return `jquants-minute:${code}:${tradeDate}`;
+}
+
+function readJpxMinuteRows(json: unknown): JpxMinuteRow[] {
+  if (!isRecord(json)) {
+    return [];
+  }
+
+  const rawRows = Array.isArray(json.data)
+    ? json.data
+    : Array.isArray(json.minute_quotes)
+      ? json.minute_quotes
+      : Array.isArray(json.bars)
+        ? json.bars
+        : Array.isArray(json)
+          ? json
+          : [];
+
+  return rawRows.filter(isRecord);
+}
+
+function toCanonicalJpxMinuteBar(
+  row: JpxMinuteRow,
+  code: string,
+  receivedAt: string,
+): JpxIntradayCandle | null {
+  const date = readString(row, ["Date", "date"]);
+  const timeRaw = readString(row, ["Time", "time"]);
+  const open = readNumber(row, ["O", "Open", "open"]);
+  const high = readNumber(row, ["H", "High", "high"]);
+  const low = readNumber(row, ["L", "Low", "low"]);
+  const close = readNumber(row, ["C", "Close", "close", "price"]);
+  const volume = readNumber(row, ["Vo", "AdjVo", "Volume", "volume"]);
+  const turnover = readNumber(row, ["Turnover", "turnover", "Value", "value", "TradingValue", "tradingValue"]);
+
+  if (!date || !timeRaw || open === null || high === null || low === null || close === null || volume === null || turnover === null) {
+    return null;
+  }
+
+  const tradeDate = date.slice(0, 10);
+  const time = normalizeJstTime(timeRaw);
+  const session = resolveIntradaySession(time);
+  if (!session) {
+    return null;
+  }
+
+  const barStartAt = buildJstIsoAtMinute(tradeDate, time);
+  const barEndAt = addOneMinuteJstIso(barStartAt);
+
+  return {
+    symbol: code,
+    time,
+    tradeDate,
+    session,
+    granularityMinutes: 1,
+    open,
+    high,
+    low,
+    close,
+    volume,
+    turnover,
+    observedAt: receivedAt,
+    receivedAt,
+    barState: "closed",
+    barStartAt,
+    barEndAt,
+    origin: {
+      kind: "canonical",
+      feed: "jquants-minute",
+      schemaVersion: 1,
+      sourceId: makeJpxMinuteSourceId(code, tradeDate),
+    },
+  };
+}
+
+function sortCanonicalBars(bars: CanonicalIntradayBar[]) {
+  return [...bars].sort((left, right) => left.barStartAt.localeCompare(right.barStartAt));
+}
+
+function enrichCanonicalBarsForStock(bars: CanonicalIntradayBar[], observedAt: string): StockCandle[] {
+  return bars.map((bar) => ({
+    ...bar,
+    time: bar.barStartAt,
+    observedAt,
+    origin: bar.origin,
+  }) as StockCandle);
+}
+
+function resampleMinuteBarsByTimeframe(
+  minuteBars: CanonicalIntradayBar[],
+  timeframe: Exclude<StockTimeframe, "1d">,
+  observedAt: string,
+): { bars: CanonicalIntradayBar[]; reason?: string } {
+  const targetMinutes = timeframe === "5m" ? 5 : 15;
+  const grouped = new Map<string, CanonicalIntradayBar[]>();
+
+  for (const bar of minuteBars) {
+    const key = `${bar.tradeDate}|${bar.session}`;
+    const bucket = grouped.get(key) ?? [];
+    bucket.push(bar);
+    grouped.set(key, bucket);
+  }
+
+  const output: CanonicalIntradayBar[] = [];
+  for (const bars of grouped.values()) {
+    const result = resampleCanonicalBars(sortCanonicalBars(bars), targetMinutes, observedAt);
+    if (result.status === "rejected") {
+      return { bars: [], reason: result.reason };
+    }
+
+    output.push(...result.bars);
+  }
+
+  return { bars: sortCanonicalBars(output) };
+}
+
+async function fetchJpxMinuteRowsWithFallback(
+  code: string,
+  baseUrl: string | undefined,
+  tradeDate: string,
+): Promise<{ rows: JpxMinuteRow[]; receivedAt: string } | null> {
+  const defaults = ["https://api.jquants.com/v2/equities/bars/minute"];
+  const candidates = [
+    baseUrl,
+    process.env.JPX_API_BASE_URL,
+    ...defaults,
+  ].filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+
+  const unique = new Set<string>();
+  const urls: URL[] = [];
+  for (const candidate of candidates) {
+    const normalized = candidate.trim();
+    if (unique.has(normalized)) {
+      continue;
+    }
+
+    unique.add(normalized);
+    urls.push(new URL(normalized));
+  }
+
+  const paramPatterns = [
+    { code, date: tradeDate },
+    { code, from: tradeDate, to: tradeDate },
+    { code, start: tradeDate, end: tradeDate },
+  ];
+
+  for (const candidate of urls) {
+    for (const params of paramPatterns) {
+      const url = new URL(candidate);
+      for (const [key, value] of Object.entries(params)) {
+        url.searchParams.set(key, value);
+      }
+
+      try {
+        const json = await fetchJQuantsJson(url);
+        const rows = readJpxMinuteRows(json);
+        if (rows.length > 0) {
+          return { rows, receivedAt: toJstIso(Date.now()) };
+        }
+      } catch (error) {
+        if (error instanceof JQuantsHttpError && (error.status === 401 || error.status === 403 || error.status === 429)) {
+          return null;
+        }
+
+        console.warn(`J-Quants minute probe failed for ${url.toString()}`, error);
+      }
+    }
+  }
+
+  return null;
+}
+
+async function fetchJpxMinuteBars(
+  code: string,
+  baseUrl: string | undefined,
+): Promise<CanonicalIntradayBar[] | null> {
+  const minuteBars: CanonicalIntradayBar[] = [];
+  const dates = getRecentJstDates(MINUTE_LOOKBACK_DAYS);
+
+  for (const tradeDate of dates) {
+    const result = await fetchJpxMinuteRowsWithFallback(code, baseUrl, tradeDate);
+    if (!result) {
+      continue;
+    }
+
+    const bars = result.rows
+      .map((row) => toCanonicalJpxMinuteBar(row, code, result.receivedAt))
+      .filter((bar): bar is JpxIntradayCandle => bar !== null);
+
+    minuteBars.push(...bars);
+  }
+
+  if (minuteBars.length === 0) {
+    return null;
+  }
+
+  return sortCanonicalBars(minuteBars);
+}
 
 function getCacheTtlMs(timeframe: StockTimeframe) {
   if (timeframe === "5m") {
@@ -480,7 +755,8 @@ async function loadJpxStockSnapshot(code: string, timeframe: StockTimeframe): Pr
       }
 
       const normalized = normalizeCachedStock(json, timeframe);
-      const fromBars = normalized ?? normalizeStockFromJpxBarsSnapshot(json, code, timeframe);
+      const normalizedForCode = normalized && normalized.code === code ? normalized : null;
+      const fromBars = normalizedForCode ?? normalizeStockFromJpxBarsSnapshot(json, code, timeframe);
       if (!fromBars) {
         continue;
       }
@@ -768,22 +1044,91 @@ export async function fetchJpxStock(
   }
 
   const code = resolveJpxCode(query);
+  async function loadSnapshotFallback() {
+    const fallback = await loadJpxStockSnapshot(code, timeframe);
+    if (fallback && fallback.code === code) {
+      await saveJpxStockSnapshot(fallback, timeframe);
+    }
+    return fallback;
+  }
+
+  async function loadMinuteFallback() {
+    const fallback = await loadJpxStockSnapshot(code, timeframe);
+    if (fallback && fallback.code === code) {
+      await saveJpxStockSnapshot(fallback, timeframe);
+    }
+    return fallback;
+  }
+
+  if (timeframe === "5m" || timeframe === "15m") {
+    try {
+      const minuteBars = await fetchJpxMinuteBars(code, baseUrl);
+      if (!minuteBars) {
+        return loadMinuteFallback();
+      }
+
+      const observedAt = toJstIso(Date.now());
+      const resampled = resampleMinuteBarsByTimeframe(minuteBars, timeframe, observedAt);
+      if (resampled.reason || resampled.bars.length === 0) {
+        return loadMinuteFallback();
+      }
+
+      const candles = enrichCanonicalBarsForStock(resampled.bars, observedAt);
+      const latest = resampled.bars[resampled.bars.length - 1];
+      const previous = resampled.bars[resampled.bars.length - 2] ?? latest;
+      const price = latest.close;
+      const previousClose = previous?.close ?? latest.close;
+      const change = price - previousClose;
+      const changePercent = previousClose > 0 ? (change / previousClose) * 100 : null;
+      const masterMeta = await fetchJpxMasterMeta(code);
+      const companyName = masterMeta?.name || query.trim() || code;
+      const sectorName = masterMeta?.sector || "未分類";
+
+      const stock = createStock({
+        code,
+        name: companyName,
+        sector: sectorName,
+        description: "J-Quants API V2 の実1分足データをもとに分析しています。",
+        marketData: {
+          price,
+          open: latest.open,
+          high: latest.high,
+          low: latest.low,
+          previousClose,
+          change,
+          changePercent,
+          currency: "JPY",
+          asOf: latest.barEndAt,
+        },
+        candles,
+        dataStatus: "real",
+        dataReason: null,
+        timeframe,
+      });
+
+      await saveJpxStockSnapshot(stock, timeframe);
+      return stock;
+    } catch {
+      return loadMinuteFallback();
+    }
+  }
+
   try {
     const result = await fetchJpxJsonWithFallback(code, baseUrl);
 
     if (!result) {
-      return loadJpxStockSnapshot(code, timeframe);
+      return loadSnapshotFallback();
     }
 
     const { json } = result;
 
     if (!isRecord(json)) {
-      return loadJpxStockSnapshot(code, timeframe);
+      return loadSnapshotFallback();
     }
 
     const candles = normalizeJpxCandles(json);
     if (candles.length === 0) {
-      return loadJpxStockSnapshot(code, timeframe);
+      return loadSnapshotFallback();
     }
 
     const latest = candles[candles.length - 1];
@@ -821,7 +1166,7 @@ export async function fetchJpxStock(
     await saveJpxStockSnapshot(stock, timeframe);
     return stock;
   } catch {
-    return loadJpxStockSnapshot(code, timeframe);
+    return loadSnapshotFallback();
   }
 }
 
