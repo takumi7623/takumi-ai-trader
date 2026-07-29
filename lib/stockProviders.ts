@@ -292,6 +292,7 @@ async function fetchJpxMinuteRowsWithFallback(
   for (const candidate of urls) {
     for (const params of paramPatterns) {
       const url = new URL(candidate);
+      url.searchParams.set("code", code);
       for (const [key, value] of Object.entries(params)) {
         url.searchParams.set(key, value);
       }
