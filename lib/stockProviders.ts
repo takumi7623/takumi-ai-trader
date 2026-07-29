@@ -176,7 +176,7 @@ function toCanonicalJpxMinuteBar(
   const low = readNumber(row, ["L", "Low", "low"]);
   const close = readNumber(row, ["C", "Close", "close", "price"]);
   const volume = readNumber(row, ["Vo", "AdjVo", "Volume", "volume"]);
-  const turnover = readNumber(row, ["Turnover", "turnover", "Value", "value", "TradingValue", "tradingValue"]);
+  const turnover = readNumber(row, ["Turnover", "turnover", "Value", "value", "TradingValue", "tradingValue", "Va"]);
 
   if (!date || !timeRaw || open === null || high === null || low === null || close === null || volume === null || turnover === null) {
     return null;
