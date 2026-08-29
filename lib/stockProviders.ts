@@ -67,7 +67,10 @@ const JPX_META_OVERRIDES: Record<string, { name: string; sector: string }> = {
 };
 
 const JPX_MASTER_META_TTL_MS = 6 * 60 * 60 * 1000;
-const STOCK_SNAPSHOT_DIR = path.join(process.cwd(), ".cache");
+const configuredSnapshotDir = process.env.JPX_STOCK_SNAPSHOT_DIR?.trim();
+const STOCK_SNAPSHOT_DIR = configuredSnapshotDir
+  ? path.resolve(configuredSnapshotDir)
+  : path.join(process.cwd(), ".cache");
 const SCORE_HISTORY_CANDLES = 320;
 const MINUTE_LOOKBACK_DAYS = 14;
 
