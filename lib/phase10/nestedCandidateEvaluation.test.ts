@@ -3,11 +3,14 @@ import test from "node:test";
 import {
   COEFFICIENT_OPTIONS,
   PHASE10_DATES,
+  evaluateRound1Candidate,
   assertFinalOosRows,
   assertPreOosRows,
   evaluateFrozenSpecOnFinalOos,
   freezeFinalCandidateSpec,
+  passesRound1Gate,
   selectCoefficientOnInnerValidation,
+  summarizeTradeRows,
   sha256,
   splitOuterTrain,
   fitCandidateOnInnerTrain,
@@ -71,4 +74,25 @@ test("Final OOS evaluator rejects date ranges outside the fixed window", () => {
   const spec = freezeFinalCandidateSpec(preOosRows, ["sma5Slope"], 1, "baseline");
   assert.throws(() => assertFinalOosRows([row("1001", "2026-05-29", 1, 1)]), /fixed Final OOS date range/);
   assert.throws(() => evaluateFrozenSpecOnFinalOos(spec, [row("1001", "2026-08-08", 1, 1)], () => 0), /fixed Final OOS date range/);
+});
+
+test("Round 1 evaluation uses pre-OOS rows only and keeps score-increment metrics unchanged", () => {
+  const rows = [
+    ...Array.from({ length: 30 }, (_, index) => row(`10${index}`, `2025-12-${String((index % 20) + 1).padStart(2, "0")}`, index, index % 2 === 0 ? 1 : -1)),
+    row("9999", "2026-06-01", 999, 999),
+  ];
+  assert.throws(() => evaluateRound1Candidate("sma5Slope", rows), /exclude Final OOS/);
+  const result = evaluateRound1Candidate("sma5Slope", rows.filter((item) => item.signalDate <= PHASE10_DATES.preOosMaxSignalDate));
+  assert.equal(result.round1Passed, false);
+  assert.deepEqual(result.pooledCandidateMetrics, result.pooledBaselineMetrics);
+  assert.equal(result.pooledDeltas.ev, 0);
+});
+
+test("Round 1 pass gate applies the fixed AND criteria", () => {
+  const baseline = summarizeTradeRows([row("1", "2026-01-01", 1, 1), row("2", "2026-01-02", 1, -1)]);
+  const candidate = { tradeCount: 2, winRate: baseline.winRate, ev: baseline.ev + 0.1, pf: baseline.pf + 0.1, maxDD: baseline.maxDD, misclassificationRate: baseline.misclassificationRate };
+  const passingDelta = { tradeCount: 0, tradeCountRatio: 1, winRate: 0, ev: 0.1, pf: 0.1, maxDD: 0, misclassificationRate: 0 };
+  assert.equal(passesRound1Gate([passingDelta, passingDelta, passingDelta], passingDelta, baseline, candidate), true);
+  assert.equal(passesRound1Gate([passingDelta, { ...passingDelta, ev: 0 }, { ...passingDelta, ev: 0 }], passingDelta, baseline, candidate), false);
+  assert.equal(passesRound1Gate([passingDelta, passingDelta, passingDelta], { ...passingDelta, pf: 0 }, baseline, candidate), false);
 });

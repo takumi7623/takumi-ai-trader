@@ -27,6 +27,10 @@ export type Phase10Row = Readonly<{
   featureValue: number;
 }>;
 
+export type Phase10ScoredRow = Phase10Row & Readonly<{
+  baselineScore: number;
+}>;
+
 export type CandidateFit = Readonly<{
   median: number;
   iqr: number;
@@ -54,6 +58,54 @@ export type NestedSplit = Readonly<{
   innerValidation: readonly Phase10Row[];
 }>;
 
+export type TradeMetrics = Readonly<{
+  tradeCount: number;
+  winRate: number;
+  ev: number;
+  pf: number;
+  maxDD: number;
+  misclassificationRate: number;
+}>;
+
+export type MetricDeltas = Readonly<{
+  tradeCount: number;
+  tradeCountRatio: number;
+  winRate: number;
+  ev: number;
+  pf: number;
+  maxDD: number;
+  misclassificationRate: number;
+}>;
+
+export type Round1FoldResult = Readonly<{
+  foldName: string;
+  trainEnd: string;
+  innerTrainRows: number;
+  innerValidationRows: number;
+  coefficient: Coefficient;
+  fit: CandidateFit;
+  baselineMetrics: TradeMetrics;
+  candidateMetrics: TradeMetrics;
+  deltas: MetricDeltas;
+  passed: boolean;
+}>;
+
+export type Round1CandidateResult = Readonly<{
+  candidateName: Round1CandidateName;
+  selectedCoefficient: Coefficient;
+  folds: readonly Round1FoldResult[];
+  pooledBaselineMetrics: TradeMetrics;
+  pooledCandidateMetrics: TradeMetrics;
+  pooledDeltas: MetricDeltas;
+  round1Passed: boolean;
+}>;
+
+export const PHASE10_OUTER_FOLDS = [
+  { name: "WF1", trainEnd: "2026-01-07" },
+  { name: "WF2", trainEnd: "2026-02-25" },
+  { name: "WF3", trainEnd: "2026-04-10" },
+] as const;
+
 function sortedRows(rows: readonly Phase10Row[]) {
   return [...rows].sort((left, right) => left.signalDate.localeCompare(right.signalDate) || left.code.localeCompare(right.code));
 }
@@ -68,6 +120,10 @@ function percentile(values: readonly number[], ratio: number) {
 
 function mean(values: readonly number[]) {
   return values.reduce((total, value) => total + value, 0) / values.length;
+}
+
+function sum(values: readonly number[]) {
+  return values.reduce((total, value) => total + value, 0);
 }
 
 function sampleVariance(values: readonly number[], average: number) {
@@ -157,6 +213,207 @@ export function selectRoundCandidates(
   results: readonly Readonly<{ candidateName: Round1CandidateName; passed: boolean }>[],
 ) {
   return results.filter((result) => result.passed).map((result) => result.candidateName);
+}
+
+export function summarizeTradeRows(rows: readonly Phase10Row[]): TradeMetrics {
+  const returns = rows.map((row) => row.return10d).filter(Number.isFinite);
+  if (returns.length === 0) {
+    return { tradeCount: 0, winRate: 0, ev: 0, pf: 0, maxDD: 0, misclassificationRate: 0 };
+  }
+
+  const wins = returns.filter((value) => value > 0);
+  const losses = returns.filter((value) => value < 0).map((value) => Math.abs(value));
+  const grossProfit = sum(wins);
+  const grossLoss = sum(losses);
+
+  let equity = 1;
+  let peak = 1;
+  let maxDD = 0;
+  for (const row of sortedRows(rows)) {
+    equity *= 1 + (row.return10d / 100);
+    peak = Math.max(peak, equity);
+    maxDD = Math.max(maxDD, peak > 0 ? ((peak - equity) / peak) * 100 : 0);
+  }
+
+  return {
+    tradeCount: returns.length,
+    winRate: wins.length / returns.length,
+    ev: sum(returns) / returns.length,
+    pf: grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? 999 : 0,
+    maxDD,
+    misclassificationRate: 1 - (wins.length / returns.length),
+  };
+}
+
+export function metricDeltas(baseline: TradeMetrics, candidate: TradeMetrics): MetricDeltas {
+  return {
+    tradeCount: candidate.tradeCount - baseline.tradeCount,
+    tradeCountRatio: baseline.tradeCount > 0 ? candidate.tradeCount / baseline.tradeCount : 0,
+    winRate: candidate.winRate - baseline.winRate,
+    ev: candidate.ev - baseline.ev,
+    pf: candidate.pf - baseline.pf,
+    maxDD: candidate.maxDD - baseline.maxDD,
+    misclassificationRate: candidate.misclassificationRate - baseline.misclassificationRate,
+  };
+}
+
+export function evaluateScoreIncrementOnly(rows: readonly Phase10Row[]): TradeMetrics {
+  assertPreOosRows(rows);
+  return summarizeTradeRows(rows);
+}
+
+export function selectRowsByCandidateScore(
+  rows: readonly Phase10ScoredRow[],
+  fit: CandidateFit,
+  coefficient: Coefficient,
+  scoreFloor = 70,
+) {
+  assertPreOosRows(rows);
+  return rows.filter((row) => {
+    const candidateScore = row.baselineScore + scoreIncrement(row.featureValue, fit, coefficient);
+    return candidateScore >= scoreFloor;
+  });
+}
+
+export function evaluateCandidateScoreFilter(
+  rows: readonly Phase10ScoredRow[],
+  fit: CandidateFit,
+  coefficient: Coefficient,
+  scoreFloor = 70,
+): TradeMetrics {
+  return summarizeTradeRows(selectRowsByCandidateScore(rows, fit, coefficient, scoreFloor));
+}
+
+export function passesRound1Gate(foldDeltas: readonly MetricDeltas[], pooledDeltas: MetricDeltas, pooledBaseline: TradeMetrics, pooledCandidate: TradeMetrics) {
+  const epsilon = 1e-10;
+  const evImprovedFolds = foldDeltas.filter((delta) => delta.ev > epsilon).length;
+  const pfImprovedFolds = foldDeltas.filter((delta) => delta.pf > epsilon).length;
+  const noFoldMaxDdWorse = foldDeltas.every((delta) => delta.maxDD <= epsilon);
+
+  return pooledDeltas.ev > epsilon
+    && pooledDeltas.pf > epsilon
+    && pooledDeltas.maxDD <= epsilon
+    && pooledDeltas.winRate >= -epsilon
+    && pooledDeltas.tradeCountRatio >= 0.8 - epsilon
+    && pooledDeltas.tradeCountRatio <= 1.2 + epsilon
+    && pooledCandidate.tradeCount > 0
+    && pooledBaseline.tradeCount > 0
+    && evImprovedFolds >= 2
+    && pfImprovedFolds >= 2
+    && noFoldMaxDdWorse;
+}
+
+export function evaluateRound1Candidate(
+  candidateName: Round1CandidateName,
+  rows: readonly Phase10Row[],
+): Round1CandidateResult {
+  assertPreOosRows(rows);
+  const folds = PHASE10_OUTER_FOLDS.map((fold) => {
+    const outerTrainRows = rows.filter((row) => row.signalDate <= fold.trainEnd);
+    const split = splitOuterTrain(outerTrainRows);
+    const fit = fitCandidateOnInnerTrain(split.innerTrain);
+    const coefficient = selectCoefficientOnInnerValidation(
+      fit,
+      split.innerValidation,
+      (validationRows) => evaluateScoreIncrementOnly(validationRows).ev,
+    );
+    const baselineMetrics = summarizeTradeRows(split.innerValidation);
+    const candidateMetrics = evaluateScoreIncrementOnly(split.innerValidation);
+    const deltas = metricDeltas(baselineMetrics, candidateMetrics);
+
+    return {
+      foldName: fold.name,
+      trainEnd: fold.trainEnd,
+      innerTrainRows: split.innerTrain.length,
+      innerValidationRows: split.innerValidation.length,
+      coefficient,
+      fit,
+      baselineMetrics,
+      candidateMetrics,
+      deltas,
+      passed: passesRound1Gate([deltas], deltas, baselineMetrics, candidateMetrics),
+    };
+  });
+
+  const innerValidationRows = PHASE10_OUTER_FOLDS.flatMap((fold) => {
+    const outerTrainRows = rows.filter((row) => row.signalDate <= fold.trainEnd);
+    return splitOuterTrain(outerTrainRows).innerValidation;
+  });
+  const pooledBaselineMetrics = summarizeTradeRows(innerValidationRows);
+  const pooledCandidateMetrics = evaluateScoreIncrementOnly(innerValidationRows);
+  const pooledDeltas = metricDeltas(pooledBaselineMetrics, pooledCandidateMetrics);
+  const foldDeltas = folds.map((fold) => fold.deltas);
+
+  return {
+    candidateName,
+    selectedCoefficient: folds[folds.length - 1]?.coefficient ?? 0,
+    folds,
+    pooledBaselineMetrics,
+    pooledCandidateMetrics,
+    pooledDeltas,
+    round1Passed: passesRound1Gate(foldDeltas, pooledDeltas, pooledBaselineMetrics, pooledCandidateMetrics),
+  };
+}
+
+export function evaluateRound1ScoredCandidate(
+  candidateName: Round1CandidateName,
+  rows: readonly Phase10ScoredRow[],
+  scoreFloor = 70,
+): Round1CandidateResult {
+  assertPreOosRows(rows);
+  const folds = PHASE10_OUTER_FOLDS.map((fold) => {
+    const outerTrainRows = rows.filter((row) => row.signalDate <= fold.trainEnd);
+    const split = splitOuterTrain(outerTrainRows);
+    const innerValidation = split.innerValidation as readonly Phase10ScoredRow[];
+    const fit = fitCandidateOnInnerTrain(split.innerTrain);
+    const coefficient = selectCoefficientOnInnerValidation(
+      fit,
+      innerValidation,
+      (validationRows, option, candidateFit) => evaluateCandidateScoreFilter(
+        validationRows as readonly Phase10ScoredRow[],
+        candidateFit,
+        option,
+        scoreFloor,
+      ).ev,
+    );
+    const baselineMetrics = summarizeTradeRows(innerValidation);
+    const candidateMetrics = evaluateCandidateScoreFilter(innerValidation, fit, coefficient, scoreFloor);
+    const deltas = metricDeltas(baselineMetrics, candidateMetrics);
+
+    return {
+      foldName: fold.name,
+      trainEnd: fold.trainEnd,
+      innerTrainRows: split.innerTrain.length,
+      innerValidationRows: split.innerValidation.length,
+      coefficient,
+      fit,
+      baselineMetrics,
+      candidateMetrics,
+      deltas,
+      passed: passesRound1Gate([deltas], deltas, baselineMetrics, candidateMetrics),
+    };
+  });
+
+  const innerValidationRows = PHASE10_OUTER_FOLDS.flatMap((fold) => {
+    const outerTrainRows = rows.filter((row) => row.signalDate <= fold.trainEnd);
+    return splitOuterTrain(outerTrainRows).innerValidation;
+  }) as unknown as readonly Phase10ScoredRow[];
+  const latestFit = folds[folds.length - 1]?.fit ?? fitCandidateOnInnerTrain(rows);
+  const selectedCoefficient = folds[folds.length - 1]?.coefficient ?? 0;
+  const pooledBaselineMetrics = summarizeTradeRows(innerValidationRows);
+  const pooledCandidateMetrics = evaluateCandidateScoreFilter(innerValidationRows, latestFit, selectedCoefficient, scoreFloor);
+  const pooledDeltas = metricDeltas(pooledBaselineMetrics, pooledCandidateMetrics);
+  const foldDeltas = folds.map((fold) => fold.deltas);
+
+  return {
+    candidateName,
+    selectedCoefficient,
+    folds,
+    pooledBaselineMetrics,
+    pooledCandidateMetrics,
+    pooledDeltas,
+    round1Passed: passesRound1Gate(foldDeltas, pooledDeltas, pooledBaselineMetrics, pooledCandidateMetrics),
+  };
 }
 
 export function stableJson(value: unknown): string {
