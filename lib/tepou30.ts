@@ -40,8 +40,26 @@ type Tepou30State = {
 
 type UniverseCandidate = {
   code: string;
-  meta: { name: string; sector: string };
+  meta: UniverseMeta;
   candles: StockCandle[];
+};
+
+type UniverseMeta = {
+  name: string;
+  sector: string;
+  marketCode?: string;
+  marketName?: string;
+  productCategory?: string;
+};
+
+type V1MarketSegment = "prime" | "standard" | "growth";
+
+type V1MarketAllocation = {
+  segment: V1MarketSegment;
+  codes: string[];
+  rawAlloc: number;
+  remainder: number;
+  currentAlloc: number;
 };
 
 type WeightHorizon = "5m" | "15m" | "1d";
@@ -122,6 +140,14 @@ const LEARNING_STORE_PATH = path.join(CACHE_DIR, "tepou30-weights.json");
 const HORIZONS: WeightHorizon[] = ["5m", "15m", "1d"];
 const WEIGHT_HISTORY_LIMIT = 30;
 const SNAPSHOT_TOP_COUNT = 300;
+
+const V1_MARKET_SEGMENTS = ["prime", "standard", "growth"] as const;
+const V1_MARKET_SEGMENT_BY_CODE: Record<string, V1MarketSegment | undefined> = {
+  "0111": "prime",
+  "0112": "standard",
+  "0113": "growth",
+};
+const V1_COMMON_STOCK_PRODUCT_CATEGORY = "011";
 
 const JPX_META_OVERRIDES: Record<string, { name: string; sector: string }> = {
   "7203": { name: "トヨタ自動車", sector: "輸送用機器" },
@@ -1783,8 +1809,114 @@ function preselectCandidates(candidates: UniverseCandidate[], limit: number) {
     .map((entry) => entry.candidate);
 }
 
+function compareCodes(left: string, right: string) {
+  const numeric = Number(left) - Number(right);
+  return numeric !== 0 ? numeric : left.localeCompare(right);
+}
+
+function resolveV1MarketSegment(meta: UniverseMeta): V1MarketSegment | undefined {
+  return meta.marketCode ? V1_MARKET_SEGMENT_BY_CODE[meta.marketCode] : undefined;
+}
+
+function isV1UniverseEligible(meta: UniverseMeta) {
+  return Boolean(resolveV1MarketSegment(meta)) && meta.productCategory === V1_COMMON_STOCK_PRODUCT_CATEGORY;
+}
+
+function allocateV1UniverseByMarket(
+  groups: Record<V1MarketSegment, string[]>,
+  maxSize: number,
+) {
+  const total = V1_MARKET_SEGMENTS.reduce((sum, segment) => sum + groups[segment].length, 0);
+  const allocations: V1MarketAllocation[] = V1_MARKET_SEGMENTS.map((segment) => {
+    const rawAlloc = (maxSize * groups[segment].length) / total;
+    const currentAlloc = Math.floor(rawAlloc);
+    return {
+      segment,
+      codes: groups[segment],
+      rawAlloc,
+      remainder: rawAlloc - currentAlloc,
+      currentAlloc,
+    };
+  });
+
+  let remainingSlots = maxSize - allocations.reduce((sum, allocation) => sum + allocation.currentAlloc, 0);
+  const byRemainder = [...allocations].sort((left, right) => {
+    if (right.remainder !== left.remainder) return right.remainder - left.remainder;
+    if (right.rawAlloc !== left.rawAlloc) return right.rawAlloc - left.rawAlloc;
+    if (right.codes.length !== left.codes.length) return right.codes.length - left.codes.length;
+    return V1_MARKET_SEGMENTS.indexOf(left.segment) - V1_MARKET_SEGMENTS.indexOf(right.segment);
+  });
+  for (const allocation of byRemainder) {
+    if (remainingSlots <= 0) break;
+    allocation.currentAlloc += 1;
+    remainingSlots -= 1;
+  }
+
+  for (const allocation of allocations) {
+    allocation.currentAlloc = Math.min(allocation.currentAlloc, allocation.codes.length);
+  }
+
+  let redistributionSlots = maxSize - allocations.reduce((sum, allocation) => sum + allocation.currentAlloc, 0);
+  while (redistributionSlots > 0) {
+    const eligible = allocations
+      .filter((allocation) => allocation.currentAlloc < allocation.codes.length)
+      .sort((left, right) => {
+        const leftShortageRatio = (left.codes.length - left.currentAlloc) / left.codes.length;
+        const rightShortageRatio = (right.codes.length - right.currentAlloc) / right.codes.length;
+        if (rightShortageRatio !== leftShortageRatio) return rightShortageRatio - leftShortageRatio;
+        const leftCapacity = left.codes.length - left.currentAlloc;
+        const rightCapacity = right.codes.length - right.currentAlloc;
+        if (rightCapacity !== leftCapacity) return rightCapacity - leftCapacity;
+        if (right.codes.length !== left.codes.length) return right.codes.length - left.codes.length;
+        return V1_MARKET_SEGMENTS.indexOf(left.segment) - V1_MARKET_SEGMENTS.indexOf(right.segment);
+      });
+    const target = eligible[0];
+    if (!target) {
+      break;
+    }
+    target.currentAlloc += 1;
+    redistributionSlots -= 1;
+  }
+
+  return allocations;
+}
+
+function selectV1EvaluationUniverseCodes(masterMap: Map<string, UniverseMeta>, maxSize: number) {
+  const groups: Record<V1MarketSegment, string[]> = {
+    prime: [],
+    standard: [],
+    growth: [],
+  };
+
+  for (const [code, meta] of masterMap) {
+    if (!isV1UniverseEligible(meta)) {
+      continue;
+    }
+    const segment = resolveV1MarketSegment(meta);
+    if (!segment) {
+      continue;
+    }
+    groups[segment].push(code);
+  }
+
+  for (const segment of V1_MARKET_SEGMENTS) {
+    groups[segment].sort(compareCodes);
+  }
+
+  const eligibleTotal = V1_MARKET_SEGMENTS.reduce((sum, segment) => sum + groups[segment].length, 0);
+  if (eligibleTotal <= maxSize) {
+    return V1_MARKET_SEGMENTS.flatMap((segment) => groups[segment]);
+  }
+
+  const allocations = allocateV1UniverseByMarket(groups, maxSize);
+  return V1_MARKET_SEGMENTS.flatMap((segment) => {
+    const allocation = allocations.find((item) => item.segment === segment);
+    return groups[segment].slice(0, allocation?.currentAlloc ?? 0);
+  });
+}
+
 function buildMasterFallbackFromCache() {
-  const map = new Map<string, { name: string; sector: string }>();
+  const map = new Map<string, UniverseMeta>();
 
   for (const state of stateByTimeframe.values()) {
     for (const item of state.data) {
@@ -1799,7 +1931,7 @@ function buildMasterFallbackFromCache() {
 }
 
 function parseMasterRows(rows: unknown[]) {
-  const map = new Map<string, { name: string; sector: string }>();
+  const map = new Map<string, UniverseMeta>();
 
   for (const row of rows) {
     if (!row || typeof row !== "object") {
@@ -1811,6 +1943,10 @@ function parseMasterRows(rows: unknown[]) {
     if (!code) {
       continue;
     }
+
+    const marketCode = readString(record, ["Mkt", "MarketCode"]);
+    const marketName = readString(record, ["MktNm", "MarketCodeName", "MarketName", "Section"]);
+    const productCategory = readString(record, ["ProdCat", "ProductCategory"]);
 
     const name = readString(record, ["CompanyName", "CoName", "CompanyNameEnglish", "CoNameEn", "Name", "name", "IssueName"]);
     const sector = readString(record, [
@@ -1830,6 +1966,9 @@ function parseMasterRows(rows: unknown[]) {
     map.set(code, {
       name: override?.name || name || code,
       sector: override?.sector || sector,
+      marketCode,
+      marketName,
+      productCategory,
     });
   }
 
@@ -2147,7 +2286,7 @@ async function buildTepou30(timeframe: StockTimeframe, sortMode: Tepou30SortMode
   if (masterMap.size === 0) {
     throw new Error("J-Quants銘柄マスタを取得できませんでした。後でもう一度お試しください。");
   }
-  const universeCodes = [...masterMap.keys()].sort((left, right) => Number(left) - Number(right)).slice(0, TARGET_UNIVERSE_SIZE);
+  const universeCodes = selectV1EvaluationUniverseCodes(masterMap, TARGET_UNIVERSE_SIZE);
   const universeSet = new Set(universeCodes);
   const recentDates = await fetchRecentDates();
   const targetDates = recentDates.slice(0, MAX_DATE_CALLS);
@@ -2231,7 +2370,7 @@ async function buildTepou30(timeframe: StockTimeframe, sortMode: Tepou30SortMode
     candidates.filter((candidate) => candidate.candles.length >= TARGET_CANDLE_DAYS),
     OPTIMIZATION_CANDIDATE_LIMIT,
   );
-  const finalScoringCandidates = preselectCandidates(candidates, FINAL_SCORING_CANDIDATE_LIMIT);
+  const finalScoringCandidates = candidates;
 
   const learningStore = await loadLearningStore();
   const selectedHorizon: WeightHorizon = timeframe === "5m" ? "5m" : timeframe === "15m" ? "15m" : "1d";
