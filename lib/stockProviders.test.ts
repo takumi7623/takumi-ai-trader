@@ -89,6 +89,45 @@ function installFetchMock() {
   };
 }
 
+function installAdjustedDailyFetchMock() {
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = async (input: RequestInfo | URL) => {
+    const url = String(input);
+
+    if (url.includes("/v2/equities/bars/daily") || url.includes("/v2/prices/daily_quotes")) {
+      return new Response(JSON.stringify({
+        data: [{
+          Date: "2026-07-26",
+          O: 100,
+          H: 120,
+          L: 90,
+          C: 110,
+          Vo: 5000,
+          AdjFactor: 0.5,
+          AdjO: 50,
+          AdjH: 60,
+          AdjL: 45,
+          AdjC: 55,
+          AdjVo: 2500,
+        }],
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+
+    if (url.includes("/v2/equities/master")) {
+      return new Response(JSON.stringify({
+        data: [{ Code: "7203", CompanyName: "トヨタ自動車", Sector33CodeName: "輸送用機器" }],
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+
+    return new Response("not found", { status: 404 });
+  };
+
+  return () => {
+    globalThis.fetch = originalFetch;
+  };
+}
+
 function setJpxAuthEnv() {
   const prev = {
     JPX_API_KEY: process.env.JPX_API_KEY,
@@ -170,6 +209,25 @@ test("1d JPX stock stays on the daily path", async () => {
 
     assert.ok(calls.some((call) => call.url.includes("/v2/equities/bars/daily") || call.url.includes("/v2/prices/daily_quotes")));
     assert.ok(!calls.some((call) => call.url.includes("/v2/equities/bars/minute")));
+  }
+});
+
+test("1d JPX stock prefers adjusted OHLC over raw values when adjusted prices exist", async () => {
+  const restoreEnv = setJpxAuthEnv();
+  const restoreFetch = installAdjustedDailyFetchMock();
+
+  try {
+    const stock = await fetchJpxStock("7203", undefined, "1d");
+    assert.ok(stock);
+    const candle = stock!.chartData!.candles[0];
+    assert.equal(candle.open, 50);
+    assert.equal(candle.high, 60);
+    assert.equal(candle.low, 45);
+    assert.equal(candle.close, 55);
+    assert.equal(candle.volume, 2500);
+  } finally {
+    restoreFetch();
+    restoreEnv();
   }
 });
 

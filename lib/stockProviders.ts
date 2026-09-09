@@ -591,11 +591,11 @@ function normalizeJpxCandles(json: unknown): StockCandle[] {
       }
 
       const time = readString(item, ["Date", "date", "time", "timestamp"]);
-      const open = readNumber(item, ["O", "Open", "open"]);
-      const high = readNumber(item, ["H", "High", "high"]);
-      const low = readNumber(item, ["L", "Low", "low"]);
-      const close = readNumber(item, ["C", "AdjC", "Close", "close", "price"]);
-      const volume = readNumber(item, ["Vo", "AdjVo", "Volume", "volume"]);
+      const open = readNumber(item, ["AdjO", "O", "Open", "open"]);
+      const high = readNumber(item, ["AdjH", "H", "High", "high"]);
+      const low = readNumber(item, ["AdjL", "L", "Low", "low"]);
+      const close = readNumber(item, ["AdjC", "C", "Close", "close", "price"]);
+      const volume = readNumber(item, ["AdjVo", "Vo", "Volume", "volume"]);
 
       if (!time || open === null || high === null || low === null || close === null) {
         return null;

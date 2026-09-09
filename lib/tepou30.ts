@@ -2179,11 +2179,11 @@ async function fetchDailyBarsByDate(date: string): Promise<JpxBarRow[]> {
 
 function toCandle(row: JpxBarRow): StockCandle | null {
   const date = readString(row, ["Date", "date", "time", "timestamp"]);
-  const open = parseNumber(row.O ?? row.Open ?? row.open ?? row.AdjO);
-  const high = parseNumber(row.H ?? row.High ?? row.high ?? row.AdjH);
-  const low = parseNumber(row.L ?? row.Low ?? row.low ?? row.AdjL);
-  const close = parseNumber(row.C ?? row.Close ?? row.close ?? row.AdjC);
-  const volume = parseNumber(row.Vo ?? row.Volume ?? row.volume ?? row.AdjVo) ?? 0;
+  const open = parseNumber(row.AdjO ?? row.O ?? row.Open ?? row.open);
+  const high = parseNumber(row.AdjH ?? row.H ?? row.High ?? row.high);
+  const low = parseNumber(row.AdjL ?? row.L ?? row.Low ?? row.low);
+  const close = parseNumber(row.AdjC ?? row.C ?? row.Close ?? row.close);
+  const volume = parseNumber(row.AdjVo ?? row.Vo ?? row.Volume ?? row.volume) ?? 0;
 
   if (!date || open === null || high === null || low === null || close === null) {
     return null;
