@@ -135,6 +135,13 @@ const LIQUIDITY_WINDOW_DAYS = 20;
 // derived optimum (see design discussion history).
 const LIQUIDITY_MIN_VALID_DAYS = 10;
 const LIQUIDITY_MIN_AVERAGE_VA = 1_000_000;
+// Data-quality gate (60-bar minimum / missing-day rules), fully independent of
+// both the 5-day candle pipeline and the liquidity auxiliary filter above.
+const DATA_QUALITY_WINDOW_DAYS = 60;
+const DATA_QUALITY_MIN_TOTAL_DAYS = 48;
+const DATA_QUALITY_RECENT_WINDOW_DAYS = 20;
+const DATA_QUALITY_MAX_RECENT_MISSING = 2;
+const DATA_QUALITY_MAX_CONSECUTIVE_MISSING = 5;
 const JQUANTS_BASE = "https://api.jquants.com/v2";
 const JQUANTS_BACKOFF_MS = 800;
 const RATE_LIMIT_COOLDOWN_MS = 20 * 60 * 1000;
@@ -2213,29 +2220,120 @@ export function classifyLiquidity(values: number[] | undefined): LiquidityClassi
   return { status: "ok", averageVa, validDays: values.length };
 }
 
+// Fetches the 60-business-day presence window (has this code produced a usable
+// candle on this date?) independently of the existing 5-day candle pipeline.
+// Reuses the same whole-window-or-nothing gate semantics as the liquidity
+// fetch: any exception, empty response, or malformed response for any single
+// target date is treated identically as a whole-window gate failure (null).
+export async function fetchDataQualityWindow(
+  dates: string[],
+  universeSet: Set<string>,
+): Promise<Map<string, boolean[]> | null> {
+  const presenceByCode = new Map<string, boolean[]>();
+  for (const code of universeSet) {
+    presenceByCode.set(code, new Array(dates.length).fill(false));
+  }
+
+  for (let dateIndex = 0; dateIndex < dates.length; dateIndex += 1) {
+    let dailyRows: JpxBarRow[];
+    try {
+      dailyRows = await fetchDailyBarsByDate(dates[dateIndex]);
+    } catch {
+      return null;
+    }
+
+    if (!isUsableLiquidityDayRows(dailyRows)) {
+      return null;
+    }
+
+    for (const row of dailyRows) {
+      const code = normalizeCode(row.Code);
+      if (!code || !presenceByCode.has(code)) {
+        continue;
+      }
+
+      if (toCandle(row) !== null) {
+        presenceByCode.get(code)![dateIndex] = true;
+      }
+    }
+  }
+
+  return presenceByCode;
+}
+
+export type DataQualityClassification =
+  | { status: "ok" }
+  | { status: "missingMarketData" }
+  | { status: "insufficientTotalDays"; totalDays: number }
+  | { status: "insufficientRecentDays"; recentMissing: number }
+  | { status: "excessiveConsecutiveGap"; longestGap: number };
+
+function longestFalseStreak(presence: boolean[]): number {
+  let longest = 0;
+  let current = 0;
+
+  for (const present of presence) {
+    current = present ? 0 : current + 1;
+    longest = Math.max(longest, current);
+  }
+
+  return longest;
+}
+
+export function classifyDataQuality(presence: boolean[] | undefined): DataQualityClassification {
+  if (!presence || presence.every((present) => !present)) {
+    return { status: "missingMarketData" };
+  }
+
+  const totalDays = presence.filter(Boolean).length;
+  if (totalDays < DATA_QUALITY_MIN_TOTAL_DAYS) {
+    return { status: "insufficientTotalDays", totalDays };
+  }
+
+  const recentWindow = presence.slice(0, DATA_QUALITY_RECENT_WINDOW_DAYS);
+  const recentMissing = recentWindow.filter((present) => !present).length;
+  if (recentMissing > DATA_QUALITY_MAX_RECENT_MISSING) {
+    return { status: "insufficientRecentDays", recentMissing };
+  }
+
+  const longestGap = longestFalseStreak(presence);
+  if (longestGap > DATA_QUALITY_MAX_CONSECUTIVE_MISSING) {
+    return { status: "excessiveConsecutiveGap", longestGap };
+  }
+
+  return { status: "ok" };
+}
+
 // Candidate-extraction responsibility only: no data fetching happens here.
-// When turnoverByCode is null (liquidity window gate failed or was skipped),
-// this build falls back to the existing (unfiltered) candidate behavior rather
-// than reverting the whole Tepou30 build to a stale previous result.
+// When turnoverByCode / dataQualityByCode is null (the corresponding window's
+// gate failed or was skipped), that specific filter is skipped independently;
+// the other filter (if its own map is available) still applies as usual, and
+// this build falls back to the existing (unfiltered) candidate behavior for
+// whichever filter is unavailable, rather than reverting the whole Tepou30
+// build to a stale previous result.
 // NOTE: the percentile-based primary filter (Universe内相対パーセンタイル下位5%除外)
-// and the 60-bar / missing-day data-quality rules are still pending separate
-// implementation and are intentionally not applied here.
+// is still pending separate implementation and is intentionally not applied here.
 export function selectV1Candidates(
   candidates: UniverseCandidate[],
   turnoverByCode: Map<string, number[]> | null,
+  dataQualityByCode: Map<string, boolean[]> | null = null,
 ): UniverseCandidate[] {
-  if (!turnoverByCode) {
-    return candidates;
-  }
-
   return candidates.filter((candidate) => {
-    const classification = classifyLiquidity(turnoverByCode.get(candidate.code));
-
-    if (classification.status === "missingMarketData" || classification.status === "insufficientData") {
-      return false;
+    if (dataQualityByCode) {
+      const dataQuality = classifyDataQuality(dataQualityByCode.get(candidate.code));
+      if (dataQuality.status !== "ok") {
+        return false;
+      }
     }
 
-    return classification.averageVa >= LIQUIDITY_MIN_AVERAGE_VA;
+    if (turnoverByCode) {
+      const liquidity = classifyLiquidity(turnoverByCode.get(candidate.code));
+      if (liquidity.status !== "ok" || liquidity.averageVa < LIQUIDITY_MIN_AVERAGE_VA) {
+        return false;
+      }
+    }
+
+    return true;
   });
 }
 
@@ -2479,7 +2577,11 @@ async function buildTepou30(timeframe: StockTimeframe, sortMode: Tepou30SortMode
 
   const liquidityWindowDates = generateRecentBusinessDates(LIQUIDITY_WINDOW_DAYS);
   const turnoverByCode = await fetchLiquidityTurnoverWindow(liquidityWindowDates, universeSet);
-  const finalScoringCandidates = selectV1Candidates(candidates, turnoverByCode);
+
+  const dataQualityWindowDates = generateRecentBusinessDates(DATA_QUALITY_WINDOW_DAYS);
+  const dataQualityByCode = await fetchDataQualityWindow(dataQualityWindowDates, universeSet);
+
+  const finalScoringCandidates = selectV1Candidates(candidates, turnoverByCode, dataQualityByCode);
 
   const learningStore = await loadLearningStore();
   const selectedHorizon: WeightHorizon = timeframe === "5m" ? "5m" : timeframe === "15m" ? "15m" : "1d";

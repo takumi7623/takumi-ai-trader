@@ -2,7 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  classifyDataQuality,
   classifyLiquidity,
+  fetchDataQualityWindow,
   fetchLiquidityTurnoverWindow,
   generateRecentBusinessDates,
   isUsableLiquidityDayRows,
@@ -170,4 +172,174 @@ test("fetchLiquidityTurnoverWindow: a malformed (schema-mismatched) response for
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+// --- classifyDataQuality helpers -------------------------------------------
+
+function buildPresence(length: number, falseIndices: number[]): boolean[] {
+  const presence = new Array(length).fill(true) as boolean[];
+  for (const index of falseIndices) {
+    presence[index] = false;
+  }
+  return presence;
+}
+
+test("classifyDataQuality: 60/60 present (clean baseline) is ok", () => {
+  const presence = buildPresence(60, []);
+  assert.equal(classifyDataQuality(presence).status, "ok");
+});
+
+test("classifyDataQuality: total exactly 48 (boundary) is ok", () => {
+  // 12 false days outside the recent-20 window, no run longer than 2.
+  const presence = buildPresence(60, [20, 24, 28, 32, 36, 40, 44, 48, 52, 56, 58, 59]);
+  const result = classifyDataQuality(presence);
+  assert.equal(result.status, "ok");
+});
+
+test("classifyDataQuality: total 47 (one below the boundary) is insufficientTotalDays", () => {
+  const presence = buildPresence(60, [20, 21, 24, 28, 32, 36, 40, 44, 48, 52, 56, 58, 59]);
+  const result = classifyDataQuality(presence);
+  assert.equal(result.status, "insufficientTotalDays");
+  if (result.status === "insufficientTotalDays") {
+    assert.equal(result.totalDays, 47);
+  }
+});
+
+test("classifyDataQuality: recent-window missing exactly 2 (boundary) is ok", () => {
+  const presence = buildPresence(60, [5, 15]);
+  const result = classifyDataQuality(presence);
+  assert.equal(result.status, "ok");
+});
+
+test("classifyDataQuality: recent-window missing 3 (one above the boundary) is insufficientRecentDays", () => {
+  const presence = buildPresence(60, [5, 10, 15]);
+  const result = classifyDataQuality(presence);
+  assert.equal(result.status, "insufficientRecentDays");
+  if (result.status === "insufficientRecentDays") {
+    assert.equal(result.recentMissing, 3);
+  }
+});
+
+test("classifyDataQuality: consecutive gap exactly 5 (boundary) is ok", () => {
+  const presence = buildPresence(60, [30, 31, 32, 33, 34]);
+  const result = classifyDataQuality(presence);
+  assert.equal(result.status, "ok");
+});
+
+test("classifyDataQuality: consecutive gap of 6 (one above the boundary) is excessiveConsecutiveGap", () => {
+  const presence = buildPresence(60, [30, 31, 32, 33, 34, 35]);
+  const result = classifyDataQuality(presence);
+  assert.equal(result.status, "excessiveConsecutiveGap");
+  if (result.status === "excessiveConsecutiveGap") {
+    assert.equal(result.longestGap, 6);
+  }
+});
+
+test("classifyDataQuality: all 60 days false is missingMarketData", () => {
+  const presence = buildPresence(60, Array.from({ length: 60 }, (_, index) => index));
+  assert.equal(classifyDataQuality(presence).status, "missingMarketData");
+});
+
+test("classifyDataQuality: undefined presence is missingMarketData", () => {
+  assert.equal(classifyDataQuality(undefined).status, "missingMarketData");
+});
+
+test("fetchDataQualityWindow: all target dates available (existing real cache, read-only) returns a populated map", async () => {
+  const universeSet = new Set(["13010", "1301"]);
+  const result = await fetchDataQualityWindow(EXISTING_CACHED_DATES, universeSet);
+  assert.ok(result !== null);
+  assert.ok((result as Map<string, boolean[]>).size > 0);
+});
+
+test("fetchDataQualityWindow: one failing date (HTTP error) among the target dates causes the whole window to return null", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes("19000101")) {
+      return new Response("simulated failure", { status: 500 });
+    }
+    return new Response(JSON.stringify({ data: [] }), { status: 200, headers: { "content-type": "application/json" } });
+  }) as typeof fetch;
+
+  try {
+    const dates = [...EXISTING_CACHED_DATES.slice(0, 4), UNCACHED_TEST_DATE];
+    const universeSet = new Set(["13010"]);
+    const result = await fetchDataQualityWindow(dates, universeSet);
+    assert.equal(result, null);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("fetchDataQualityWindow: a malformed (schema-mismatched) response for one date also causes the window to return null", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes("19000101")) {
+      return new Response(JSON.stringify({ unexpected: "shape" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return new Response(JSON.stringify({ data: [] }), { status: 200, headers: { "content-type": "application/json" } });
+  }) as typeof fetch;
+
+  try {
+    const dates = [...EXISTING_CACHED_DATES.slice(0, 4), UNCACHED_TEST_DATE];
+    const universeSet = new Set(["13010"]);
+    const result = await fetchDataQualityWindow(dates, universeSet);
+    assert.equal(result, null);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("selectV1Candidates: dataQualityByCode === null applies liquidity filter only", () => {
+  const candidates = [makeCandidate("LIQ_OK"), makeCandidate("LIQ_BELOW")];
+  const turnoverByCode = new Map<string, number[]>([
+    ["LIQ_OK", Array.from({ length: 10 }, () => 5_000_000)],
+    ["LIQ_BELOW", Array.from({ length: 10 }, () => 500_000)],
+  ]);
+
+  const result = selectV1Candidates(candidates, turnoverByCode, null).map((candidate) => candidate.code);
+  assert.deepEqual(result, ["LIQ_OK"]);
+});
+
+test("selectV1Candidates: turnoverByCode === null applies data-quality filter only", () => {
+  const candidates = [makeCandidate("DQ_OK"), makeCandidate("DQ_BAD")];
+  const dataQualityByCode = new Map<string, boolean[]>([
+    ["DQ_OK", buildPresence(60, [])],
+    ["DQ_BAD", buildPresence(60, Array.from({ length: 60 }, (_, index) => index))],
+  ]);
+
+  const result = selectV1Candidates(candidates, null, dataQualityByCode).map((candidate) => candidate.code);
+  assert.deepEqual(result, ["DQ_OK"]);
+});
+
+test("selectV1Candidates: both maps provided combine as an AND condition", () => {
+  const candidates = [
+    makeCandidate("BOTH_OK"),
+    makeCandidate("DQ_FAILS_LIQ_OK"),
+    makeCandidate("DQ_OK_LIQ_FAILS"),
+  ];
+
+  const turnoverByCode = new Map<string, number[]>([
+    ["BOTH_OK", Array.from({ length: 10 }, () => 5_000_000)],
+    ["DQ_FAILS_LIQ_OK", Array.from({ length: 10 }, () => 5_000_000)],
+    ["DQ_OK_LIQ_FAILS", Array.from({ length: 10 }, () => 500_000)],
+  ]);
+  const dataQualityByCode = new Map<string, boolean[]>([
+    ["BOTH_OK", buildPresence(60, [])],
+    ["DQ_FAILS_LIQ_OK", buildPresence(60, Array.from({ length: 60 }, (_, index) => index))],
+    ["DQ_OK_LIQ_FAILS", buildPresence(60, [])],
+  ]);
+
+  const result = selectV1Candidates(candidates, turnoverByCode, dataQualityByCode).map((candidate) => candidate.code);
+  assert.deepEqual(result, ["BOTH_OK"]);
+});
+
+test("selectV1Candidates: both maps null keeps existing (unfiltered) behavior", () => {
+  const candidates = [makeCandidate("1001"), makeCandidate("1002")];
+  const result = selectV1Candidates(candidates, null, null);
+  assert.deepEqual(result, candidates);
 });
