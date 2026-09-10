@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   classifyDataQuality,
   classifyLiquidity,
+  computePercentileExcludedCodes,
   fetchDataQualityWindow,
   fetchLiquidityTurnoverWindow,
   generateRecentBusinessDates,
@@ -342,4 +343,143 @@ test("selectV1Candidates: both maps null keeps existing (unfiltered) behavior", 
   const candidates = [makeCandidate("1001"), makeCandidate("1002")];
   const result = selectV1Candidates(candidates, null, null);
   assert.deepEqual(result, candidates);
+});
+
+// --- computePercentileExcludedCodes helpers --------------------------------
+
+function makePopulation(size: number): { candidates: ReturnType<typeof makeCandidate>[]; turnoverByCode: Map<string, number[]>; dataQualityByCode: Map<string, boolean[]> } {
+  const candidates = [];
+  const turnoverByCode = new Map<string, number[]>();
+  const dataQualityByCode = new Map<string, boolean[]>();
+
+  for (let index = 0; index < size; index += 1) {
+    const code = `P${String(index).padStart(4, "0")}`;
+    candidates.push(makeCandidate(code));
+    // Ascending averageVa by index: index 0 has the lowest liquidity.
+    turnoverByCode.set(code, Array.from({ length: 10 }, () => (index + 1) * 1000));
+    dataQualityByCode.set(code, buildPresence(60, []));
+  }
+
+  return { candidates, turnoverByCode, dataQualityByCode };
+}
+
+test("computePercentileExcludedCodes: turnoverByCode === null returns null", () => {
+  const { candidates, dataQualityByCode } = makePopulation(10);
+  const result = computePercentileExcludedCodes(candidates, null, dataQualityByCode);
+  assert.equal(result, null);
+});
+
+test("computePercentileExcludedCodes: dataQualityByCode === null returns null", () => {
+  const { candidates, turnoverByCode } = makePopulation(10);
+  const result = computePercentileExcludedCodes(candidates, turnoverByCode, null);
+  assert.equal(result, null);
+});
+
+test("computePercentileExcludedCodes: population 100 (cutoffCount=5), just below the boundary (rank index 3) is excluded", () => {
+  const { candidates, turnoverByCode, dataQualityByCode } = makePopulation(100);
+  const result = computePercentileExcludedCodes(candidates, turnoverByCode, dataQualityByCode) as Set<string>;
+  assert.ok(result.has("P0003"));
+});
+
+test("computePercentileExcludedCodes: population 100 (cutoffCount=5), exactly at the boundary (rank index 4, last excluded) is excluded", () => {
+  const { candidates, turnoverByCode, dataQualityByCode } = makePopulation(100);
+  const result = computePercentileExcludedCodes(candidates, turnoverByCode, dataQualityByCode) as Set<string>;
+  assert.ok(result.has("P0004"));
+});
+
+test("computePercentileExcludedCodes: population 100 (cutoffCount=5), just above the boundary (rank index 5, first kept) is not excluded", () => {
+  const { candidates, turnoverByCode, dataQualityByCode } = makePopulation(100);
+  const result = computePercentileExcludedCodes(candidates, turnoverByCode, dataQualityByCode) as Set<string>;
+  assert.equal(result.has("P0005"), false);
+});
+
+test("computePercentileExcludedCodes: population 19 (cutoffCount=0) excludes nobody", () => {
+  const { candidates, turnoverByCode, dataQualityByCode } = makePopulation(19);
+  const result = computePercentileExcludedCodes(candidates, turnoverByCode, dataQualityByCode) as Set<string>;
+  assert.equal(result.size, 0);
+});
+
+test("computePercentileExcludedCodes: population 20 (cutoffCount=1) excludes exactly one code", () => {
+  const { candidates, turnoverByCode, dataQualityByCode } = makePopulation(20);
+  const result = computePercentileExcludedCodes(candidates, turnoverByCode, dataQualityByCode) as Set<string>;
+  assert.equal(result.size, 1);
+});
+
+test("computePercentileExcludedCodes: tied averageVa at the boundary is broken deterministically by ascending code, keeping the excluded count fixed", () => {
+  const { candidates, turnoverByCode, dataQualityByCode } = makePopulation(100);
+  // Force codes P0003, P0004, P0005 (straddling the cutoffCount=5 boundary) to share the same averageVa.
+  turnoverByCode.set("P0003", Array.from({ length: 10 }, () => 4000));
+  turnoverByCode.set("P0004", Array.from({ length: 10 }, () => 4000));
+  turnoverByCode.set("P0005", Array.from({ length: 10 }, () => 4000));
+
+  const result = computePercentileExcludedCodes(candidates, turnoverByCode, dataQualityByCode) as Set<string>;
+  assert.equal(result.size, 5);
+});
+
+test("computePercentileExcludedCodes: a data-quality-failing code is excluded from the population denominator", () => {
+  const { candidates, turnoverByCode, dataQualityByCode } = makePopulation(20);
+  dataQualityByCode.set("P0000", buildPresence(60, Array.from({ length: 60 }, (_, index) => index)));
+
+  const result = computePercentileExcludedCodes(candidates, turnoverByCode, dataQualityByCode) as Set<string>;
+  // Population shrinks to 19 (cutoffCount=0), so the failing code's absence
+  // means nobody else gets excluded either, and the failing code itself is
+  // never part of the exclusion set (it was never in the population).
+  assert.equal(result.size, 0);
+});
+
+test("selectV1Candidates: percentileExcludedCodes === null skips the percentile filter (only liquidity/data-quality apply)", () => {
+  const candidates = [makeCandidate("KEEP")];
+  const result = selectV1Candidates(candidates, null, null, null);
+  assert.deepEqual(result, candidates);
+});
+
+test("selectV1Candidates: a code present in percentileExcludedCodes is excluded even when it passes liquidity and data quality", () => {
+  const candidates = [makeCandidate("PCT_EXCLUDED"), makeCandidate("PCT_KEPT")];
+  const turnoverByCode = new Map<string, number[]>([
+    ["PCT_EXCLUDED", Array.from({ length: 10 }, () => 5_000_000)],
+    ["PCT_KEPT", Array.from({ length: 10 }, () => 5_000_000)],
+  ]);
+  const dataQualityByCode = new Map<string, boolean[]>([
+    ["PCT_EXCLUDED", buildPresence(60, [])],
+    ["PCT_KEPT", buildPresence(60, [])],
+  ]);
+  const percentileExcludedCodes = new Set(["PCT_EXCLUDED"]);
+
+  const result = selectV1Candidates(candidates, turnoverByCode, dataQualityByCode, percentileExcludedCodes).map(
+    (candidate) => candidate.code,
+  );
+  assert.deepEqual(result, ["PCT_KEPT"]);
+});
+
+test("selectV1Candidates: all three filter inputs null keeps existing (unfiltered) behavior", () => {
+  const candidates = [makeCandidate("2001"), makeCandidate("2002")];
+  const result = selectV1Candidates(candidates, null, null, null);
+  assert.deepEqual(result, candidates);
+});
+
+test("selectV1Candidates: three filters combine as AND, each excluding a different candidate for a different reason", () => {
+  const candidates = [
+    makeCandidate("ALL_PASS"),
+    makeCandidate("FAILS_DATA_QUALITY"),
+    makeCandidate("FAILS_LIQUIDITY"),
+    makeCandidate("FAILS_PERCENTILE"),
+  ];
+  const turnoverByCode = new Map<string, number[]>([
+    ["ALL_PASS", Array.from({ length: 10 }, () => 5_000_000)],
+    ["FAILS_DATA_QUALITY", Array.from({ length: 10 }, () => 5_000_000)],
+    ["FAILS_LIQUIDITY", Array.from({ length: 10 }, () => 500_000)],
+    ["FAILS_PERCENTILE", Array.from({ length: 10 }, () => 5_000_000)],
+  ]);
+  const dataQualityByCode = new Map<string, boolean[]>([
+    ["ALL_PASS", buildPresence(60, [])],
+    ["FAILS_DATA_QUALITY", buildPresence(60, Array.from({ length: 60 }, (_, index) => index))],
+    ["FAILS_LIQUIDITY", buildPresence(60, [])],
+    ["FAILS_PERCENTILE", buildPresence(60, [])],
+  ]);
+  const percentileExcludedCodes = new Set(["FAILS_PERCENTILE"]);
+
+  const result = selectV1Candidates(candidates, turnoverByCode, dataQualityByCode, percentileExcludedCodes).map(
+    (candidate) => candidate.code,
+  );
+  assert.deepEqual(result, ["ALL_PASS"]);
 });

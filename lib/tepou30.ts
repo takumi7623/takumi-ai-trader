@@ -2304,19 +2304,61 @@ export function classifyDataQuality(presence: boolean[] | undefined): DataQualit
   return { status: "ok" };
 }
 
+// Percentile primary filter (Universe内相対パーセンタイル下位5%除外).
+// Population = codes that are structurally valid for BOTH the data-quality
+// gate and the liquidity average (i.e. classifyDataQuality === "ok" AND
+// classifyLiquidity === "ok"). The 1,000,000-yen absolute threshold is
+// intentionally NOT part of this population definition or its exclusion
+// logic: it remains a fully independent filter applied only in
+// selectV1Candidates. Exclusion is rank-based (not value-threshold-based) so
+// the excluded count stays exactly floor(N * ratio) even with tied averageVa
+// values; ties are broken deterministically by ascending code.
+const PERCENTILE_EXCLUSION_RATIO = 0.05;
+
+export function computePercentileExcludedCodes(
+  candidates: UniverseCandidate[],
+  turnoverByCode: Map<string, number[]> | null,
+  dataQualityByCode: Map<string, boolean[]> | null,
+): Set<string> | null {
+  if (!turnoverByCode || !dataQualityByCode) {
+    return null;
+  }
+
+  const population: { code: string; averageVa: number }[] = [];
+  for (const candidate of candidates) {
+    const dataQuality = classifyDataQuality(dataQualityByCode.get(candidate.code));
+    if (dataQuality.status !== "ok") {
+      continue;
+    }
+
+    const liquidity = classifyLiquidity(turnoverByCode.get(candidate.code));
+    if (liquidity.status !== "ok") {
+      continue;
+    }
+
+    population.push({ code: candidate.code, averageVa: liquidity.averageVa });
+  }
+
+  const sorted = [...population].sort((a, b) =>
+    a.averageVa - b.averageVa || (a.code < b.code ? -1 : a.code > b.code ? 1 : 0),
+  );
+  const cutoffCount = Math.floor(sorted.length * PERCENTILE_EXCLUSION_RATIO);
+
+  return new Set(sorted.slice(0, cutoffCount).map((entry) => entry.code));
+}
+
 // Candidate-extraction responsibility only: no data fetching happens here.
-// When turnoverByCode / dataQualityByCode is null (the corresponding window's
-// gate failed or was skipped), that specific filter is skipped independently;
-// the other filter (if its own map is available) still applies as usual, and
-// this build falls back to the existing (unfiltered) candidate behavior for
-// whichever filter is unavailable, rather than reverting the whole Tepou30
-// build to a stale previous result.
-// NOTE: the percentile-based primary filter (Universe内相対パーセンタイル下位5%除外)
-// is still pending separate implementation and is intentionally not applied here.
+// When turnoverByCode / dataQualityByCode / percentileExcludedCodes is null
+// (the corresponding window's gate failed or was skipped), that specific
+// filter is skipped independently; the other filters (if available) still
+// apply as usual, and this build falls back to the existing (unfiltered)
+// candidate behavior for whichever filter is unavailable, rather than
+// reverting the whole Tepou30 build to a stale previous result.
 export function selectV1Candidates(
   candidates: UniverseCandidate[],
   turnoverByCode: Map<string, number[]> | null,
   dataQualityByCode: Map<string, boolean[]> | null = null,
+  percentileExcludedCodes: Set<string> | null = null,
 ): UniverseCandidate[] {
   return candidates.filter((candidate) => {
     if (dataQualityByCode) {
@@ -2331,6 +2373,10 @@ export function selectV1Candidates(
       if (liquidity.status !== "ok" || liquidity.averageVa < LIQUIDITY_MIN_AVERAGE_VA) {
         return false;
       }
+    }
+
+    if (percentileExcludedCodes && percentileExcludedCodes.has(candidate.code)) {
+      return false;
     }
 
     return true;
@@ -2581,7 +2627,8 @@ async function buildTepou30(timeframe: StockTimeframe, sortMode: Tepou30SortMode
   const dataQualityWindowDates = generateRecentBusinessDates(DATA_QUALITY_WINDOW_DAYS);
   const dataQualityByCode = await fetchDataQualityWindow(dataQualityWindowDates, universeSet);
 
-  const finalScoringCandidates = selectV1Candidates(candidates, turnoverByCode, dataQualityByCode);
+  const percentileExcludedCodes = computePercentileExcludedCodes(candidates, turnoverByCode, dataQualityByCode);
+  const finalScoringCandidates = selectV1Candidates(candidates, turnoverByCode, dataQualityByCode, percentileExcludedCodes);
 
   const learningStore = await loadLearningStore();
   const selectedHorizon: WeightHorizon = timeframe === "5m" ? "5m" : timeframe === "15m" ? "15m" : "1d";
