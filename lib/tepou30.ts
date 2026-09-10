@@ -127,6 +127,14 @@ const MAX_STORED_CANDLES = 320;
 const MAX_DATE_CALLS = 5;
 const OPTIMIZATION_CANDIDATE_LIMIT = 700;
 const FINAL_SCORING_CANDIDATE_LIMIT = TARGET_UNIVERSE_SIZE;
+// Liquidity auxiliary filter (supplementary to the not-yet-implemented percentile
+// primary filter / 60-bar data-quality rules). Fetched via a fully separate
+// window from the 5-day candle pipeline so existing AI scoring is unaffected.
+const LIQUIDITY_WINDOW_DAYS = 20;
+// Minimum observation threshold is a practical compromise, not a statistically
+// derived optimum (see design discussion history).
+const LIQUIDITY_MIN_VALID_DAYS = 10;
+const LIQUIDITY_MIN_AVERAGE_VA = 1_000_000;
 const JQUANTS_BASE = "https://api.jquants.com/v2";
 const JQUANTS_BACKOFF_MS = 800;
 const RATE_LIMIT_COOLDOWN_MS = 20 * 60 * 1000;
@@ -2117,12 +2125,12 @@ async function loadAnyBarsCache(): Promise<JpxBarRow[]> {
   return [];
 }
 
-async function fetchRecentDates() {
+export function generateRecentBusinessDates(count: number) {
   const generated: string[] = [];
   const subscriptionEndDate = new Date("2026-04-21T00:00:00.000Z");
   const cursor = new Date(Math.min(Date.now(), subscriptionEndDate.getTime()));
 
-  while (generated.length < MAX_DATE_CALLS) {
+  while (generated.length < count) {
     const day = cursor.getDay();
     if (day !== 0 && day !== 6) {
       generated.push(`${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, "0")}-${String(cursor.getDate()).padStart(2, "0")}`);
@@ -2131,6 +2139,104 @@ async function fetchRecentDates() {
   }
 
   return generated;
+}
+
+async function fetchRecentDates() {
+  return generateRecentBusinessDates(MAX_DATE_CALLS);
+}
+
+export function isUsableLiquidityDayRows(rows: unknown): rows is JpxBarRow[] {
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return false;
+  }
+
+  return rows.some((row) => Boolean(row) && typeof row === "object" && normalizeCode((row as JpxBarRow).Code) !== null);
+}
+
+// Fetches the liquidity-only turnover window (Va) independently of the existing
+// 5-day candle pipeline. Any exception, empty response, or malformed response for
+// any single target date is treated identically as a whole-window gate failure
+// (returns null), so a partial/unreliable window is never used for judgment.
+export async function fetchLiquidityTurnoverWindow(
+  dates: string[],
+  universeSet: Set<string>,
+): Promise<Map<string, number[]> | null> {
+  const turnoverByCode = new Map<string, number[]>();
+
+  for (const date of dates) {
+    let dailyRows: JpxBarRow[];
+    try {
+      dailyRows = await fetchDailyBarsByDate(date);
+    } catch {
+      return null;
+    }
+
+    if (!isUsableLiquidityDayRows(dailyRows)) {
+      return null;
+    }
+
+    for (const row of dailyRows) {
+      const code = normalizeCode(row.Code);
+      if (!code || !universeSet.has(code)) {
+        continue;
+      }
+
+      const va = parseNumber(row.Va);
+      if (va === null || va <= 0) {
+        continue;
+      }
+
+      const list = turnoverByCode.get(code) ?? [];
+      list.push(va);
+      turnoverByCode.set(code, list);
+    }
+  }
+
+  return turnoverByCode;
+}
+
+export type LiquidityClassification =
+  | { status: "ok"; averageVa: number; validDays: number }
+  | { status: "insufficientData"; validDays: number }
+  | { status: "missingMarketData" };
+
+export function classifyLiquidity(values: number[] | undefined): LiquidityClassification {
+  if (!values || values.length === 0) {
+    return { status: "missingMarketData" };
+  }
+
+  if (values.length < LIQUIDITY_MIN_VALID_DAYS) {
+    return { status: "insufficientData", validDays: values.length };
+  }
+
+  const averageVa = values.reduce((sum, value) => sum + value, 0) / values.length;
+  return { status: "ok", averageVa, validDays: values.length };
+}
+
+// Candidate-extraction responsibility only: no data fetching happens here.
+// When turnoverByCode is null (liquidity window gate failed or was skipped),
+// this build falls back to the existing (unfiltered) candidate behavior rather
+// than reverting the whole Tepou30 build to a stale previous result.
+// NOTE: the percentile-based primary filter (Universe内相対パーセンタイル下位5%除外)
+// and the 60-bar / missing-day data-quality rules are still pending separate
+// implementation and are intentionally not applied here.
+export function selectV1Candidates(
+  candidates: UniverseCandidate[],
+  turnoverByCode: Map<string, number[]> | null,
+): UniverseCandidate[] {
+  if (!turnoverByCode) {
+    return candidates;
+  }
+
+  return candidates.filter((candidate) => {
+    const classification = classifyLiquidity(turnoverByCode.get(candidate.code));
+
+    if (classification.status === "missingMarketData" || classification.status === "insufficientData") {
+      return false;
+    }
+
+    return classification.averageVa >= LIQUIDITY_MIN_AVERAGE_VA;
+  });
 }
 
 async function fetchDailyBarsByDate(date: string): Promise<JpxBarRow[]> {
@@ -2370,7 +2476,10 @@ async function buildTepou30(timeframe: StockTimeframe, sortMode: Tepou30SortMode
     candidates.filter((candidate) => candidate.candles.length >= TARGET_CANDLE_DAYS),
     OPTIMIZATION_CANDIDATE_LIMIT,
   );
-  const finalScoringCandidates = candidates;
+
+  const liquidityWindowDates = generateRecentBusinessDates(LIQUIDITY_WINDOW_DAYS);
+  const turnoverByCode = await fetchLiquidityTurnoverWindow(liquidityWindowDates, universeSet);
+  const finalScoringCandidates = selectV1Candidates(candidates, turnoverByCode);
 
   const learningStore = await loadLearningStore();
   const selectedHorizon: WeightHorizon = timeframe === "5m" ? "5m" : timeframe === "15m" ? "15m" : "1d";
