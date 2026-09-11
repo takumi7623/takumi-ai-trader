@@ -445,3 +445,68 @@ test("analyzeStock explains v1.4 bearish divergence and false breakout", () => {
   assert.ok(result.reasons.some((reason) => reason.includes("出来高減少による減点") || reason.includes("参加者が減っています")));
   assert.ok(result.aiReason.some((reason) => reason.includes("Trend整合") || reason.includes("200日線")));
 });
+
+function buildSma200CoverageStock(candleCount: number): Stock {
+  const candles = Array.from({ length: candleCount }, (_, index) => {
+    const base = 2000 + index * 8;
+    return {
+      time: `2025-01-${String((index % 28) + 1).padStart(2, "0")}`,
+      open: base,
+      high: base + 20,
+      low: base - 10,
+      close: base + 12,
+      volume: 1500000 + index * 1000,
+    };
+  });
+  const latest = candles[candles.length - 1];
+
+  return buildTrendingStock(candles, {
+    price: latest.close,
+    open: latest.open,
+    high: latest.high,
+    low: latest.low,
+    previousClose: candles[candles.length - 2].close,
+    change: latest.close - candles[candles.length - 2].close,
+    changePercent: 0,
+    currency: "JPY",
+    asOf: null,
+  });
+}
+
+type Sma200TrendDebug = {
+  hasSma200: boolean;
+  sma200PriceContribution: number;
+  sma75VsSma200Contribution: number;
+};
+
+function getSma200TrendDebug(result: ReturnType<typeof analyzeStock>): Sma200TrendDebug | undefined {
+  return (result.scoreDebug as (typeof result.scoreDebug & { trend?: Sma200TrendDebug }) | undefined)?.trend;
+}
+
+test("analyzeStock neutralizes both SMA200 contributions when 120 candles cannot calculate SMA200", () => {
+  const result = analyzeStock(
+    { query: "7203", stock: buildSma200CoverageStock(120) },
+    { debugTrace: true },
+  );
+  const trend = getSma200TrendDebug(result);
+
+  assert.ok(trend);
+  assert.equal(trend.hasSma200, false);
+  assert.equal(trend.sma200PriceContribution, 0);
+  assert.equal(trend.sma75VsSma200Contribution, 0);
+  assert.ok(result.reasons.some((reason) => reason.includes("データ不足のため判定対象外")));
+});
+
+test("analyzeStock keeps both SMA200 contributions when 220 candles calculate SMA200", () => {
+  const result = analyzeStock(
+    { query: "7203", stock: buildSma200CoverageStock(220) },
+    { debugTrace: true },
+  );
+  const trend = getSma200TrendDebug(result);
+
+  assert.ok(trend);
+  assert.equal(trend.hasSma200, true);
+  assert.equal(trend.sma200PriceContribution, 10);
+  assert.equal(trend.sma75VsSma200Contribution, 6);
+  assert.ok(!result.reasons.some((reason) => reason.includes("データ不足のため判定対象外")));
+});

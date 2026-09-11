@@ -1247,6 +1247,11 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
   let latestSma25 = latestClose;
   let latestSma75 = latestClose;
   let latestSma200 = latestClose;
+  let hasSma200 = false;
+  let trend200Direction = 0;
+  let sma200PriceContribution = 0;
+  let sma75VsSma200Contribution = 0;
+  let trendMultiFrameScore = 0;
   let latestAdx = 0;
   let latestMacdHistogram = 0;
   let macdHistogramDelta = 0;
@@ -1293,6 +1298,7 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
     latestSma25 = sma25[sma25.length - 1]?.value ?? latest?.close ?? 0;
     latestSma75 = sma75[sma75.length - 1]?.value ?? latest?.close ?? 0;
     latestSma200 = sma200[sma200.length - 1]?.value ?? latest?.close ?? 0;
+    hasSma200 = sma200.length > 0;
     const ma5Values = sma5.map((point) => point.value);
     const ma25Values = sma25.map((point) => point.value);
     const ma75Values = sma75.map((point) => point.value);
@@ -1769,17 +1775,19 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
     score = v13CompositeScore;
     const divergenceSignals = buildDivergenceSignals(candles, rsiSeries, macdSeries);
     const candlestickSignals = buildCandlestickPatternSignals(candles);
-    const trend200Direction = latestClose > latestSma200 ? 1 : latestClose < latestSma200 ? -1 : 0;
-    const trendMultiFrameScore = clamp(
+    trend200Direction = hasSma200 ? (latestClose > latestSma200 ? 1 : latestClose < latestSma200 ? -1 : 0) : 0;
+    sma200PriceContribution = hasSma200 ? (latestClose > latestSma200 ? 10 : -10) : 0;
+    sma75VsSma200Contribution = hasSma200 ? (latestSma75 > latestSma200 ? 6 : -6) : 0;
+    trendMultiFrameScore = clamp(
       Math.round(
         50
           + (latestClose > latestSma5 ? 8 : -8)
           + (latestClose > latestSma25 ? 7 : -7)
           + (latestClose > latestSma75 ? 6 : -6)
-          + (latestClose > latestSma200 ? 10 : -10)
+          + sma200PriceContribution
           + (latestSma5 > latestSma25 ? 5 : -5)
           + (latestSma25 > latestSma75 ? 5 : -5)
-          + (latestSma75 > latestSma200 ? 6 : -6)
+          + sma75VsSma200Contribution
           + clamp(trendStack.alignment * 2.5, -8, 8),
       ),
       0,
@@ -1819,7 +1827,7 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
       22,
     );
     score = clamp(score + v14CompositeDelta, 0, 100);
-    reasons.push(`【v1.4 Trend整合】5/25/75/200日トレンド整合性は${trendMultiFrameScore}点で、200日線は${trend200Direction > 0 ? "上向き" : trend200Direction < 0 ? "下向き" : "横ばい"}です。`);
+    reasons.push(`【v1.4 Trend整合】5/25/75/200日トレンド整合性は${trendMultiFrameScore}点で、200日線は${!hasSma200 ? "データ不足のため判定対象外" : trend200Direction > 0 ? "上向き" : trend200Direction < 0 ? "下向き" : "横ばい"}です。`);
     reasons.push(`【v1.4 Divergence】${divergenceSignals.reasons.join(" / ") || "明確な乖離は検出されていません。"}`);
     reasons.push(`【v1.4 Candlestick】${candlestickSignals.reasons.join(" / ") || "明確なローソク足パターンは検出されていません。"}`);
     reasons.push(`【v1.4 Volume】出来高急増率${volumeSurgeRate.toFixed(2)}倍、Volume Spike Score ${volumeSpikeScore}点、出来高減少補正${volumeDeclinePenalty}点です。`);
@@ -2624,6 +2632,13 @@ export function analyzeStock(input: AiScoreInput, options?: AnalyzeStockOptions)
         adjustedBlend: Number(adjustedBlend.toFixed(6)),
         normalizedBacktestBlend: Number(normalizedBacktestBlend.toFixed(6)),
         softFloorPassthrough: Number(floorPassthrough.toFixed(6)),
+      },
+      trend: {
+        hasSma200,
+        trend200Direction,
+        sma200PriceContribution,
+        sma75VsSma200Contribution,
+        trendMultiFrameScore,
       },
       path: {
         productionPathScore: Number(productionPathScore.toFixed(6)),
