@@ -1777,14 +1777,17 @@ function normalizeCode(value: unknown): string | null {
     return null;
   }
 
-  const text = String(value).replace(/\D/g, "");
+  const text = String(value).trim().toUpperCase();
 
-  if (/^\d{4}$/.test(text)) {
+  if (/^[A-Z0-9]{4}$/.test(text)) {
     return text;
   }
 
-  if (/^\d{5}$/.test(text)) {
-    return text.slice(0, 4);
+  if (/^[A-Z0-9]{5}$/.test(text)) {
+    if (text.endsWith("0")) {
+      return text.slice(0, 4);
+    }
+    return text;
   }
 
   return null;

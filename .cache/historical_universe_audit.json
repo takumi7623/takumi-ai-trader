@@ -1,0 +1,2382 @@
+{
+  "generatedAt": "2026-09-12T07:29:15.262Z",
+  "startDate": "2025-01-31",
+  "endDate": "2026-04-17",
+  "totalEvalDays": 296,
+  "totalRecordsAcrossDays": 1308346,
+  "totalExactDuplicatesRemoved": 0,
+  "maxPagesPerDayGuard": 50,
+  "overallSha256": "95c364aa2d308c6266b1de636206cfd5837a61e641eb38362309cf6ac4e8eb23",
+  "paginationByDate": {
+    "2025-01-31": {
+      "date": "2025-01-31",
+      "totalPages": 1,
+      "totalRawRows": 4410,
+      "uniqueRows": 4410,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-02-03": {
+      "date": "2025-02-03",
+      "totalPages": 1,
+      "totalRawRows": 4409,
+      "uniqueRows": 4409,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-02-04": {
+      "date": "2025-02-04",
+      "totalPages": 1,
+      "totalRawRows": 4409,
+      "uniqueRows": 4409,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-02-05": {
+      "date": "2025-02-05",
+      "totalPages": 1,
+      "totalRawRows": 4411,
+      "uniqueRows": 4411,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-02-06": {
+      "date": "2025-02-06",
+      "totalPages": 1,
+      "totalRawRows": 4410,
+      "uniqueRows": 4410,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-02-07": {
+      "date": "2025-02-07",
+      "totalPages": 1,
+      "totalRawRows": 4410,
+      "uniqueRows": 4410,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-02-10": {
+      "date": "2025-02-10",
+      "totalPages": 1,
+      "totalRawRows": 4408,
+      "uniqueRows": 4408,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-02-12": {
+      "date": "2025-02-12",
+      "totalPages": 1,
+      "totalRawRows": 4407,
+      "uniqueRows": 4407,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-02-13": {
+      "date": "2025-02-13",
+      "totalPages": 1,
+      "totalRawRows": 4408,
+      "uniqueRows": 4408,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-02-14": {
+      "date": "2025-02-14",
+      "totalPages": 1,
+      "totalRawRows": 4408,
+      "uniqueRows": 4408,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-02-17": {
+      "date": "2025-02-17",
+      "totalPages": 1,
+      "totalRawRows": 4407,
+      "uniqueRows": 4407,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-02-18": {
+      "date": "2025-02-18",
+      "totalPages": 1,
+      "totalRawRows": 4407,
+      "uniqueRows": 4407,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-02-19": {
+      "date": "2025-02-19",
+      "totalPages": 1,
+      "totalRawRows": 4406,
+      "uniqueRows": 4406,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-02-20": {
+      "date": "2025-02-20",
+      "totalPages": 1,
+      "totalRawRows": 4408,
+      "uniqueRows": 4408,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-02-21": {
+      "date": "2025-02-21",
+      "totalPages": 1,
+      "totalRawRows": 4409,
+      "uniqueRows": 4409,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-02-25": {
+      "date": "2025-02-25",
+      "totalPages": 1,
+      "totalRawRows": 4408,
+      "uniqueRows": 4408,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-02-26": {
+      "date": "2025-02-26",
+      "totalPages": 1,
+      "totalRawRows": 4406,
+      "uniqueRows": 4406,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-02-27": {
+      "date": "2025-02-27",
+      "totalPages": 1,
+      "totalRawRows": 4406,
+      "uniqueRows": 4406,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-02-28": {
+      "date": "2025-02-28",
+      "totalPages": 1,
+      "totalRawRows": 4407,
+      "uniqueRows": 4407,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-03-03": {
+      "date": "2025-03-03",
+      "totalPages": 1,
+      "totalRawRows": 4407,
+      "uniqueRows": 4407,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-03-04": {
+      "date": "2025-03-04",
+      "totalPages": 1,
+      "totalRawRows": 4405,
+      "uniqueRows": 4405,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-03-05": {
+      "date": "2025-03-05",
+      "totalPages": 1,
+      "totalRawRows": 4405,
+      "uniqueRows": 4405,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-03-06": {
+      "date": "2025-03-06",
+      "totalPages": 1,
+      "totalRawRows": 4405,
+      "uniqueRows": 4405,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-03-07": {
+      "date": "2025-03-07",
+      "totalPages": 1,
+      "totalRawRows": 4405,
+      "uniqueRows": 4405,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-03-10": {
+      "date": "2025-03-10",
+      "totalPages": 1,
+      "totalRawRows": 4404,
+      "uniqueRows": 4404,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-03-11": {
+      "date": "2025-03-11",
+      "totalPages": 1,
+      "totalRawRows": 4404,
+      "uniqueRows": 4404,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-03-12": {
+      "date": "2025-03-12",
+      "totalPages": 1,
+      "totalRawRows": 4404,
+      "uniqueRows": 4404,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-03-13": {
+      "date": "2025-03-13",
+      "totalPages": 1,
+      "totalRawRows": 4403,
+      "uniqueRows": 4403,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-03-14": {
+      "date": "2025-03-14",
+      "totalPages": 1,
+      "totalRawRows": 4403,
+      "uniqueRows": 4403,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-03-17": {
+      "date": "2025-03-17",
+      "totalPages": 1,
+      "totalRawRows": 4403,
+      "uniqueRows": 4403,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-03-18": {
+      "date": "2025-03-18",
+      "totalPages": 1,
+      "totalRawRows": 4403,
+      "uniqueRows": 4403,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-03-19": {
+      "date": "2025-03-19",
+      "totalPages": 1,
+      "totalRawRows": 4404,
+      "uniqueRows": 4404,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-03-21": {
+      "date": "2025-03-21",
+      "totalPages": 1,
+      "totalRawRows": 4403,
+      "uniqueRows": 4403,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-03-24": {
+      "date": "2025-03-24",
+      "totalPages": 1,
+      "totalRawRows": 4404,
+      "uniqueRows": 4404,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-03-25": {
+      "date": "2025-03-25",
+      "totalPages": 1,
+      "totalRawRows": 4405,
+      "uniqueRows": 4405,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-03-26": {
+      "date": "2025-03-26",
+      "totalPages": 1,
+      "totalRawRows": 4405,
+      "uniqueRows": 4405,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-03-27": {
+      "date": "2025-03-27",
+      "totalPages": 1,
+      "totalRawRows": 4409,
+      "uniqueRows": 4409,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-03-28": {
+      "date": "2025-03-28",
+      "totalPages": 1,
+      "totalRawRows": 4410,
+      "uniqueRows": 4410,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-03-31": {
+      "date": "2025-03-31",
+      "totalPages": 1,
+      "totalRawRows": 4411,
+      "uniqueRows": 4411,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-04-01": {
+      "date": "2025-04-01",
+      "totalPages": 1,
+      "totalRawRows": 4411,
+      "uniqueRows": 4411,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-04-02": {
+      "date": "2025-04-02",
+      "totalPages": 1,
+      "totalRawRows": 4411,
+      "uniqueRows": 4411,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-04-03": {
+      "date": "2025-04-03",
+      "totalPages": 1,
+      "totalRawRows": 4411,
+      "uniqueRows": 4411,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-04-04": {
+      "date": "2025-04-04",
+      "totalPages": 1,
+      "totalRawRows": 4412,
+      "uniqueRows": 4412,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-04-07": {
+      "date": "2025-04-07",
+      "totalPages": 1,
+      "totalRawRows": 4413,
+      "uniqueRows": 4413,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-04-08": {
+      "date": "2025-04-08",
+      "totalPages": 1,
+      "totalRawRows": 4413,
+      "uniqueRows": 4413,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-04-09": {
+      "date": "2025-04-09",
+      "totalPages": 1,
+      "totalRawRows": 4413,
+      "uniqueRows": 4413,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-04-10": {
+      "date": "2025-04-10",
+      "totalPages": 1,
+      "totalRawRows": 4413,
+      "uniqueRows": 4413,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-04-11": {
+      "date": "2025-04-11",
+      "totalPages": 1,
+      "totalRawRows": 4413,
+      "uniqueRows": 4413,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-04-14": {
+      "date": "2025-04-14",
+      "totalPages": 1,
+      "totalRawRows": 4413,
+      "uniqueRows": 4413,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-04-15": {
+      "date": "2025-04-15",
+      "totalPages": 1,
+      "totalRawRows": 4413,
+      "uniqueRows": 4413,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-04-16": {
+      "date": "2025-04-16",
+      "totalPages": 1,
+      "totalRawRows": 4414,
+      "uniqueRows": 4414,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-04-17": {
+      "date": "2025-04-17",
+      "totalPages": 1,
+      "totalRawRows": 4415,
+      "uniqueRows": 4415,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-04-18": {
+      "date": "2025-04-18",
+      "totalPages": 1,
+      "totalRawRows": 4417,
+      "uniqueRows": 4417,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-04-21": {
+      "date": "2025-04-21",
+      "totalPages": 1,
+      "totalRawRows": 4417,
+      "uniqueRows": 4417,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-04-22": {
+      "date": "2025-04-22",
+      "totalPages": 1,
+      "totalRawRows": 4418,
+      "uniqueRows": 4418,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-04-23": {
+      "date": "2025-04-23",
+      "totalPages": 1,
+      "totalRawRows": 4416,
+      "uniqueRows": 4416,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-04-24": {
+      "date": "2025-04-24",
+      "totalPages": 1,
+      "totalRawRows": 4417,
+      "uniqueRows": 4417,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-04-25": {
+      "date": "2025-04-25",
+      "totalPages": 1,
+      "totalRawRows": 4416,
+      "uniqueRows": 4416,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-04-28": {
+      "date": "2025-04-28",
+      "totalPages": 1,
+      "totalRawRows": 4416,
+      "uniqueRows": 4416,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-04-30": {
+      "date": "2025-04-30",
+      "totalPages": 1,
+      "totalRawRows": 4415,
+      "uniqueRows": 4415,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-05-01": {
+      "date": "2025-05-01",
+      "totalPages": 1,
+      "totalRawRows": 4415,
+      "uniqueRows": 4415,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-05-02": {
+      "date": "2025-05-02",
+      "totalPages": 1,
+      "totalRawRows": 4415,
+      "uniqueRows": 4415,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-05-07": {
+      "date": "2025-05-07",
+      "totalPages": 1,
+      "totalRawRows": 4415,
+      "uniqueRows": 4415,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-05-08": {
+      "date": "2025-05-08",
+      "totalPages": 1,
+      "totalRawRows": 4415,
+      "uniqueRows": 4415,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-05-09": {
+      "date": "2025-05-09",
+      "totalPages": 1,
+      "totalRawRows": 4414,
+      "uniqueRows": 4414,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-05-12": {
+      "date": "2025-05-12",
+      "totalPages": 1,
+      "totalRawRows": 4414,
+      "uniqueRows": 4414,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-05-13": {
+      "date": "2025-05-13",
+      "totalPages": 1,
+      "totalRawRows": 4413,
+      "uniqueRows": 4413,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-05-14": {
+      "date": "2025-05-14",
+      "totalPages": 1,
+      "totalRawRows": 4411,
+      "uniqueRows": 4411,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-05-15": {
+      "date": "2025-05-15",
+      "totalPages": 1,
+      "totalRawRows": 4411,
+      "uniqueRows": 4411,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-05-16": {
+      "date": "2025-05-16",
+      "totalPages": 1,
+      "totalRawRows": 4410,
+      "uniqueRows": 4410,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-05-19": {
+      "date": "2025-05-19",
+      "totalPages": 1,
+      "totalRawRows": 4410,
+      "uniqueRows": 4410,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-05-20": {
+      "date": "2025-05-20",
+      "totalPages": 1,
+      "totalRawRows": 4410,
+      "uniqueRows": 4410,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-05-21": {
+      "date": "2025-05-21",
+      "totalPages": 1,
+      "totalRawRows": 4410,
+      "uniqueRows": 4410,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-05-22": {
+      "date": "2025-05-22",
+      "totalPages": 1,
+      "totalRawRows": 4410,
+      "uniqueRows": 4410,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-05-23": {
+      "date": "2025-05-23",
+      "totalPages": 1,
+      "totalRawRows": 4413,
+      "uniqueRows": 4413,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-05-26": {
+      "date": "2025-05-26",
+      "totalPages": 1,
+      "totalRawRows": 4412,
+      "uniqueRows": 4412,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-05-27": {
+      "date": "2025-05-27",
+      "totalPages": 1,
+      "totalRawRows": 4412,
+      "uniqueRows": 4412,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-05-28": {
+      "date": "2025-05-28",
+      "totalPages": 1,
+      "totalRawRows": 4411,
+      "uniqueRows": 4411,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-05-29": {
+      "date": "2025-05-29",
+      "totalPages": 1,
+      "totalRawRows": 4409,
+      "uniqueRows": 4409,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-05-30": {
+      "date": "2025-05-30",
+      "totalPages": 1,
+      "totalRawRows": 4409,
+      "uniqueRows": 4409,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-06-02": {
+      "date": "2025-06-02",
+      "totalPages": 1,
+      "totalRawRows": 4408,
+      "uniqueRows": 4408,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-06-03": {
+      "date": "2025-06-03",
+      "totalPages": 1,
+      "totalRawRows": 4408,
+      "uniqueRows": 4408,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-06-04": {
+      "date": "2025-06-04",
+      "totalPages": 1,
+      "totalRawRows": 4408,
+      "uniqueRows": 4408,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-06-05": {
+      "date": "2025-06-05",
+      "totalPages": 1,
+      "totalRawRows": 4408,
+      "uniqueRows": 4408,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-06-06": {
+      "date": "2025-06-06",
+      "totalPages": 1,
+      "totalRawRows": 4408,
+      "uniqueRows": 4408,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-06-09": {
+      "date": "2025-06-09",
+      "totalPages": 1,
+      "totalRawRows": 4406,
+      "uniqueRows": 4406,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-06-10": {
+      "date": "2025-06-10",
+      "totalPages": 1,
+      "totalRawRows": 4406,
+      "uniqueRows": 4406,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-06-11": {
+      "date": "2025-06-11",
+      "totalPages": 1,
+      "totalRawRows": 4406,
+      "uniqueRows": 4406,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-06-12": {
+      "date": "2025-06-12",
+      "totalPages": 1,
+      "totalRawRows": 4406,
+      "uniqueRows": 4406,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-06-13": {
+      "date": "2025-06-13",
+      "totalPages": 1,
+      "totalRawRows": 4405,
+      "uniqueRows": 4405,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-06-16": {
+      "date": "2025-06-16",
+      "totalPages": 1,
+      "totalRawRows": 4403,
+      "uniqueRows": 4403,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-06-17": {
+      "date": "2025-06-17",
+      "totalPages": 1,
+      "totalRawRows": 4400,
+      "uniqueRows": 4400,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-06-18": {
+      "date": "2025-06-18",
+      "totalPages": 1,
+      "totalRawRows": 4400,
+      "uniqueRows": 4400,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-06-19": {
+      "date": "2025-06-19",
+      "totalPages": 1,
+      "totalRawRows": 4398,
+      "uniqueRows": 4398,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-06-20": {
+      "date": "2025-06-20",
+      "totalPages": 1,
+      "totalRawRows": 4400,
+      "uniqueRows": 4400,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-06-23": {
+      "date": "2025-06-23",
+      "totalPages": 1,
+      "totalRawRows": 4401,
+      "uniqueRows": 4401,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-06-24": {
+      "date": "2025-06-24",
+      "totalPages": 1,
+      "totalRawRows": 4404,
+      "uniqueRows": 4404,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-06-25": {
+      "date": "2025-06-25",
+      "totalPages": 1,
+      "totalRawRows": 4408,
+      "uniqueRows": 4408,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-06-26": {
+      "date": "2025-06-26",
+      "totalPages": 1,
+      "totalRawRows": 4410,
+      "uniqueRows": 4410,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-06-27": {
+      "date": "2025-06-27",
+      "totalPages": 1,
+      "totalRawRows": 4409,
+      "uniqueRows": 4409,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-06-30": {
+      "date": "2025-06-30",
+      "totalPages": 1,
+      "totalRawRows": 4412,
+      "uniqueRows": 4412,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-07-01": {
+      "date": "2025-07-01",
+      "totalPages": 1,
+      "totalRawRows": 4412,
+      "uniqueRows": 4412,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-07-02": {
+      "date": "2025-07-02",
+      "totalPages": 1,
+      "totalRawRows": 4411,
+      "uniqueRows": 4411,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-07-03": {
+      "date": "2025-07-03",
+      "totalPages": 1,
+      "totalRawRows": 4411,
+      "uniqueRows": 4411,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-07-04": {
+      "date": "2025-07-04",
+      "totalPages": 1,
+      "totalRawRows": 4413,
+      "uniqueRows": 4413,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-07-07": {
+      "date": "2025-07-07",
+      "totalPages": 1,
+      "totalRawRows": 4413,
+      "uniqueRows": 4413,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-07-08": {
+      "date": "2025-07-08",
+      "totalPages": 1,
+      "totalRawRows": 4413,
+      "uniqueRows": 4413,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-07-09": {
+      "date": "2025-07-09",
+      "totalPages": 1,
+      "totalRawRows": 4412,
+      "uniqueRows": 4412,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-07-10": {
+      "date": "2025-07-10",
+      "totalPages": 1,
+      "totalRawRows": 4412,
+      "uniqueRows": 4412,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-07-11": {
+      "date": "2025-07-11",
+      "totalPages": 1,
+      "totalRawRows": 4411,
+      "uniqueRows": 4411,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-07-14": {
+      "date": "2025-07-14",
+      "totalPages": 1,
+      "totalRawRows": 4411,
+      "uniqueRows": 4411,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-07-15": {
+      "date": "2025-07-15",
+      "totalPages": 1,
+      "totalRawRows": 4411,
+      "uniqueRows": 4411,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-07-16": {
+      "date": "2025-07-16",
+      "totalPages": 1,
+      "totalRawRows": 4411,
+      "uniqueRows": 4411,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-07-17": {
+      "date": "2025-07-17",
+      "totalPages": 1,
+      "totalRawRows": 4409,
+      "uniqueRows": 4409,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-07-18": {
+      "date": "2025-07-18",
+      "totalPages": 1,
+      "totalRawRows": 4416,
+      "uniqueRows": 4416,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-07-22": {
+      "date": "2025-07-22",
+      "totalPages": 1,
+      "totalRawRows": 4416,
+      "uniqueRows": 4416,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-07-23": {
+      "date": "2025-07-23",
+      "totalPages": 1,
+      "totalRawRows": 4416,
+      "uniqueRows": 4416,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-07-24": {
+      "date": "2025-07-24",
+      "totalPages": 1,
+      "totalRawRows": 4418,
+      "uniqueRows": 4418,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-07-25": {
+      "date": "2025-07-25",
+      "totalPages": 1,
+      "totalRawRows": 4417,
+      "uniqueRows": 4417,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-07-28": {
+      "date": "2025-07-28",
+      "totalPages": 1,
+      "totalRawRows": 4415,
+      "uniqueRows": 4415,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-07-29": {
+      "date": "2025-07-29",
+      "totalPages": 1,
+      "totalRawRows": 4415,
+      "uniqueRows": 4415,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-07-30": {
+      "date": "2025-07-30",
+      "totalPages": 1,
+      "totalRawRows": 4415,
+      "uniqueRows": 4415,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-07-31": {
+      "date": "2025-07-31",
+      "totalPages": 1,
+      "totalRawRows": 4414,
+      "uniqueRows": 4414,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-08-01": {
+      "date": "2025-08-01",
+      "totalPages": 1,
+      "totalRawRows": 4414,
+      "uniqueRows": 4414,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-08-04": {
+      "date": "2025-08-04",
+      "totalPages": 1,
+      "totalRawRows": 4413,
+      "uniqueRows": 4413,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-08-05": {
+      "date": "2025-08-05",
+      "totalPages": 1,
+      "totalRawRows": 4414,
+      "uniqueRows": 4414,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-08-06": {
+      "date": "2025-08-06",
+      "totalPages": 1,
+      "totalRawRows": 4415,
+      "uniqueRows": 4415,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-08-07": {
+      "date": "2025-08-07",
+      "totalPages": 1,
+      "totalRawRows": 4415,
+      "uniqueRows": 4415,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-08-08": {
+      "date": "2025-08-08",
+      "totalPages": 1,
+      "totalRawRows": 4415,
+      "uniqueRows": 4415,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-08-12": {
+      "date": "2025-08-12",
+      "totalPages": 1,
+      "totalRawRows": 4415,
+      "uniqueRows": 4415,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-08-13": {
+      "date": "2025-08-13",
+      "totalPages": 1,
+      "totalRawRows": 4417,
+      "uniqueRows": 4417,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-08-14": {
+      "date": "2025-08-14",
+      "totalPages": 1,
+      "totalRawRows": 4417,
+      "uniqueRows": 4417,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-08-15": {
+      "date": "2025-08-15",
+      "totalPages": 1,
+      "totalRawRows": 4417,
+      "uniqueRows": 4417,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-08-18": {
+      "date": "2025-08-18",
+      "totalPages": 1,
+      "totalRawRows": 4415,
+      "uniqueRows": 4415,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-08-19": {
+      "date": "2025-08-19",
+      "totalPages": 1,
+      "totalRawRows": 4414,
+      "uniqueRows": 4414,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-08-20": {
+      "date": "2025-08-20",
+      "totalPages": 1,
+      "totalRawRows": 4414,
+      "uniqueRows": 4414,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-08-21": {
+      "date": "2025-08-21",
+      "totalPages": 1,
+      "totalRawRows": 4414,
+      "uniqueRows": 4414,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-08-22": {
+      "date": "2025-08-22",
+      "totalPages": 1,
+      "totalRawRows": 4414,
+      "uniqueRows": 4414,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-08-25": {
+      "date": "2025-08-25",
+      "totalPages": 1,
+      "totalRawRows": 4414,
+      "uniqueRows": 4414,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-08-26": {
+      "date": "2025-08-26",
+      "totalPages": 1,
+      "totalRawRows": 4414,
+      "uniqueRows": 4414,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-08-27": {
+      "date": "2025-08-27",
+      "totalPages": 1,
+      "totalRawRows": 4414,
+      "uniqueRows": 4414,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-08-28": {
+      "date": "2025-08-28",
+      "totalPages": 1,
+      "totalRawRows": 4411,
+      "uniqueRows": 4411,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-08-29": {
+      "date": "2025-08-29",
+      "totalPages": 1,
+      "totalRawRows": 4411,
+      "uniqueRows": 4411,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-09-01": {
+      "date": "2025-09-01",
+      "totalPages": 1,
+      "totalRawRows": 4410,
+      "uniqueRows": 4410,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-09-02": {
+      "date": "2025-09-02",
+      "totalPages": 1,
+      "totalRawRows": 4410,
+      "uniqueRows": 4410,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-09-03": {
+      "date": "2025-09-03",
+      "totalPages": 1,
+      "totalRawRows": 4410,
+      "uniqueRows": 4410,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-09-04": {
+      "date": "2025-09-04",
+      "totalPages": 1,
+      "totalRawRows": 4409,
+      "uniqueRows": 4409,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-09-05": {
+      "date": "2025-09-05",
+      "totalPages": 1,
+      "totalRawRows": 4409,
+      "uniqueRows": 4409,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-09-08": {
+      "date": "2025-09-08",
+      "totalPages": 1,
+      "totalRawRows": 4408,
+      "uniqueRows": 4408,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-09-09": {
+      "date": "2025-09-09",
+      "totalPages": 1,
+      "totalRawRows": 4408,
+      "uniqueRows": 4408,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-09-10": {
+      "date": "2025-09-10",
+      "totalPages": 1,
+      "totalRawRows": 4409,
+      "uniqueRows": 4409,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-09-11": {
+      "date": "2025-09-11",
+      "totalPages": 1,
+      "totalRawRows": 4410,
+      "uniqueRows": 4410,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-09-12": {
+      "date": "2025-09-12",
+      "totalPages": 1,
+      "totalRawRows": 4411,
+      "uniqueRows": 4411,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-09-16": {
+      "date": "2025-09-16",
+      "totalPages": 1,
+      "totalRawRows": 4411,
+      "uniqueRows": 4411,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-09-17": {
+      "date": "2025-09-17",
+      "totalPages": 1,
+      "totalRawRows": 4411,
+      "uniqueRows": 4411,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-09-18": {
+      "date": "2025-09-18",
+      "totalPages": 1,
+      "totalRawRows": 4412,
+      "uniqueRows": 4412,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-09-19": {
+      "date": "2025-09-19",
+      "totalPages": 1,
+      "totalRawRows": 4409,
+      "uniqueRows": 4409,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-09-22": {
+      "date": "2025-09-22",
+      "totalPages": 1,
+      "totalRawRows": 4409,
+      "uniqueRows": 4409,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-09-24": {
+      "date": "2025-09-24",
+      "totalPages": 1,
+      "totalRawRows": 4408,
+      "uniqueRows": 4408,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-09-25": {
+      "date": "2025-09-25",
+      "totalPages": 1,
+      "totalRawRows": 4411,
+      "uniqueRows": 4411,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-09-26": {
+      "date": "2025-09-26",
+      "totalPages": 1,
+      "totalRawRows": 4412,
+      "uniqueRows": 4412,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-09-29": {
+      "date": "2025-09-29",
+      "totalPages": 1,
+      "totalRawRows": 4404,
+      "uniqueRows": 4404,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-09-30": {
+      "date": "2025-09-30",
+      "totalPages": 1,
+      "totalRawRows": 4403,
+      "uniqueRows": 4403,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-10-01": {
+      "date": "2025-10-01",
+      "totalPages": 1,
+      "totalRawRows": 4408,
+      "uniqueRows": 4408,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-10-02": {
+      "date": "2025-10-02",
+      "totalPages": 1,
+      "totalRawRows": 4409,
+      "uniqueRows": 4409,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-10-03": {
+      "date": "2025-10-03",
+      "totalPages": 1,
+      "totalRawRows": 4410,
+      "uniqueRows": 4410,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-10-06": {
+      "date": "2025-10-06",
+      "totalPages": 1,
+      "totalRawRows": 4411,
+      "uniqueRows": 4411,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-10-07": {
+      "date": "2025-10-07",
+      "totalPages": 1,
+      "totalRawRows": 4413,
+      "uniqueRows": 4413,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-10-08": {
+      "date": "2025-10-08",
+      "totalPages": 1,
+      "totalRawRows": 4414,
+      "uniqueRows": 4414,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-10-09": {
+      "date": "2025-10-09",
+      "totalPages": 1,
+      "totalRawRows": 4414,
+      "uniqueRows": 4414,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-10-10": {
+      "date": "2025-10-10",
+      "totalPages": 1,
+      "totalRawRows": 4414,
+      "uniqueRows": 4414,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-10-14": {
+      "date": "2025-10-14",
+      "totalPages": 1,
+      "totalRawRows": 4412,
+      "uniqueRows": 4412,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-10-15": {
+      "date": "2025-10-15",
+      "totalPages": 1,
+      "totalRawRows": 4413,
+      "uniqueRows": 4413,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-10-16": {
+      "date": "2025-10-16",
+      "totalPages": 1,
+      "totalRawRows": 4413,
+      "uniqueRows": 4413,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-10-17": {
+      "date": "2025-10-17",
+      "totalPages": 1,
+      "totalRawRows": 4414,
+      "uniqueRows": 4414,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-10-20": {
+      "date": "2025-10-20",
+      "totalPages": 1,
+      "totalRawRows": 4414,
+      "uniqueRows": 4414,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-10-21": {
+      "date": "2025-10-21",
+      "totalPages": 1,
+      "totalRawRows": 4415,
+      "uniqueRows": 4415,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-10-22": {
+      "date": "2025-10-22",
+      "totalPages": 1,
+      "totalRawRows": 4415,
+      "uniqueRows": 4415,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-10-23": {
+      "date": "2025-10-23",
+      "totalPages": 1,
+      "totalRawRows": 4418,
+      "uniqueRows": 4418,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-10-24": {
+      "date": "2025-10-24",
+      "totalPages": 1,
+      "totalRawRows": 4419,
+      "uniqueRows": 4419,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-10-27": {
+      "date": "2025-10-27",
+      "totalPages": 1,
+      "totalRawRows": 4419,
+      "uniqueRows": 4419,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-10-28": {
+      "date": "2025-10-28",
+      "totalPages": 1,
+      "totalRawRows": 4419,
+      "uniqueRows": 4419,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-10-29": {
+      "date": "2025-10-29",
+      "totalPages": 1,
+      "totalRawRows": 4419,
+      "uniqueRows": 4419,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-10-30": {
+      "date": "2025-10-30",
+      "totalPages": 1,
+      "totalRawRows": 4417,
+      "uniqueRows": 4417,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-10-31": {
+      "date": "2025-10-31",
+      "totalPages": 1,
+      "totalRawRows": 4417,
+      "uniqueRows": 4417,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-11-04": {
+      "date": "2025-11-04",
+      "totalPages": 1,
+      "totalRawRows": 4418,
+      "uniqueRows": 4418,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-11-05": {
+      "date": "2025-11-05",
+      "totalPages": 1,
+      "totalRawRows": 4418,
+      "uniqueRows": 4418,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-11-06": {
+      "date": "2025-11-06",
+      "totalPages": 1,
+      "totalRawRows": 4417,
+      "uniqueRows": 4417,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-11-07": {
+      "date": "2025-11-07",
+      "totalPages": 1,
+      "totalRawRows": 4416,
+      "uniqueRows": 4416,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-11-10": {
+      "date": "2025-11-10",
+      "totalPages": 1,
+      "totalRawRows": 4416,
+      "uniqueRows": 4416,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-11-11": {
+      "date": "2025-11-11",
+      "totalPages": 1,
+      "totalRawRows": 4416,
+      "uniqueRows": 4416,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-11-12": {
+      "date": "2025-11-12",
+      "totalPages": 1,
+      "totalRawRows": 4419,
+      "uniqueRows": 4419,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-11-13": {
+      "date": "2025-11-13",
+      "totalPages": 1,
+      "totalRawRows": 4420,
+      "uniqueRows": 4420,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-11-14": {
+      "date": "2025-11-14",
+      "totalPages": 1,
+      "totalRawRows": 4421,
+      "uniqueRows": 4421,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-11-17": {
+      "date": "2025-11-17",
+      "totalPages": 1,
+      "totalRawRows": 4418,
+      "uniqueRows": 4418,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-11-18": {
+      "date": "2025-11-18",
+      "totalPages": 1,
+      "totalRawRows": 4419,
+      "uniqueRows": 4419,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-11-19": {
+      "date": "2025-11-19",
+      "totalPages": 1,
+      "totalRawRows": 4424,
+      "uniqueRows": 4424,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-11-20": {
+      "date": "2025-11-20",
+      "totalPages": 1,
+      "totalRawRows": 4423,
+      "uniqueRows": 4423,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-11-21": {
+      "date": "2025-11-21",
+      "totalPages": 1,
+      "totalRawRows": 4425,
+      "uniqueRows": 4425,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-11-25": {
+      "date": "2025-11-25",
+      "totalPages": 1,
+      "totalRawRows": 4425,
+      "uniqueRows": 4425,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-11-26": {
+      "date": "2025-11-26",
+      "totalPages": 1,
+      "totalRawRows": 4428,
+      "uniqueRows": 4428,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-11-27": {
+      "date": "2025-11-27",
+      "totalPages": 1,
+      "totalRawRows": 4426,
+      "uniqueRows": 4426,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-11-28": {
+      "date": "2025-11-28",
+      "totalPages": 1,
+      "totalRawRows": 4425,
+      "uniqueRows": 4425,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-12-01": {
+      "date": "2025-12-01",
+      "totalPages": 1,
+      "totalRawRows": 4428,
+      "uniqueRows": 4428,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-12-02": {
+      "date": "2025-12-02",
+      "totalPages": 1,
+      "totalRawRows": 4427,
+      "uniqueRows": 4427,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-12-03": {
+      "date": "2025-12-03",
+      "totalPages": 1,
+      "totalRawRows": 4427,
+      "uniqueRows": 4427,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-12-04": {
+      "date": "2025-12-04",
+      "totalPages": 1,
+      "totalRawRows": 4427,
+      "uniqueRows": 4427,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-12-05": {
+      "date": "2025-12-05",
+      "totalPages": 1,
+      "totalRawRows": 4429,
+      "uniqueRows": 4429,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-12-08": {
+      "date": "2025-12-08",
+      "totalPages": 1,
+      "totalRawRows": 4428,
+      "uniqueRows": 4428,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-12-09": {
+      "date": "2025-12-09",
+      "totalPages": 1,
+      "totalRawRows": 4427,
+      "uniqueRows": 4427,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-12-10": {
+      "date": "2025-12-10",
+      "totalPages": 1,
+      "totalRawRows": 4427,
+      "uniqueRows": 4427,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-12-11": {
+      "date": "2025-12-11",
+      "totalPages": 1,
+      "totalRawRows": 4427,
+      "uniqueRows": 4427,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-12-12": {
+      "date": "2025-12-12",
+      "totalPages": 1,
+      "totalRawRows": 4427,
+      "uniqueRows": 4427,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-12-15": {
+      "date": "2025-12-15",
+      "totalPages": 1,
+      "totalRawRows": 4428,
+      "uniqueRows": 4428,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-12-16": {
+      "date": "2025-12-16",
+      "totalPages": 1,
+      "totalRawRows": 4428,
+      "uniqueRows": 4428,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-12-17": {
+      "date": "2025-12-17",
+      "totalPages": 1,
+      "totalRawRows": 4432,
+      "uniqueRows": 4432,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-12-18": {
+      "date": "2025-12-18",
+      "totalPages": 1,
+      "totalRawRows": 4434,
+      "uniqueRows": 4434,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-12-19": {
+      "date": "2025-12-19",
+      "totalPages": 1,
+      "totalRawRows": 4433,
+      "uniqueRows": 4433,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-12-22": {
+      "date": "2025-12-22",
+      "totalPages": 1,
+      "totalRawRows": 4434,
+      "uniqueRows": 4434,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-12-23": {
+      "date": "2025-12-23",
+      "totalPages": 1,
+      "totalRawRows": 4434,
+      "uniqueRows": 4434,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-12-24": {
+      "date": "2025-12-24",
+      "totalPages": 1,
+      "totalRawRows": 4437,
+      "uniqueRows": 4437,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-12-25": {
+      "date": "2025-12-25",
+      "totalPages": 1,
+      "totalRawRows": 4437,
+      "uniqueRows": 4437,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-12-26": {
+      "date": "2025-12-26",
+      "totalPages": 1,
+      "totalRawRows": 4438,
+      "uniqueRows": 4438,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-12-29": {
+      "date": "2025-12-29",
+      "totalPages": 1,
+      "totalRawRows": 4437,
+      "uniqueRows": 4437,
+      "exactDuplicatesRemoved": 0
+    },
+    "2025-12-30": {
+      "date": "2025-12-30",
+      "totalPages": 1,
+      "totalRawRows": 4437,
+      "uniqueRows": 4437,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-01-05": {
+      "date": "2026-01-05",
+      "totalPages": 1,
+      "totalRawRows": 4436,
+      "uniqueRows": 4436,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-01-06": {
+      "date": "2026-01-06",
+      "totalPages": 1,
+      "totalRawRows": 4436,
+      "uniqueRows": 4436,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-01-07": {
+      "date": "2026-01-07",
+      "totalPages": 1,
+      "totalRawRows": 4436,
+      "uniqueRows": 4436,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-01-08": {
+      "date": "2026-01-08",
+      "totalPages": 1,
+      "totalRawRows": 4435,
+      "uniqueRows": 4435,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-01-09": {
+      "date": "2026-01-09",
+      "totalPages": 1,
+      "totalRawRows": 4435,
+      "uniqueRows": 4435,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-01-13": {
+      "date": "2026-01-13",
+      "totalPages": 1,
+      "totalRawRows": 4434,
+      "uniqueRows": 4434,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-01-14": {
+      "date": "2026-01-14",
+      "totalPages": 1,
+      "totalRawRows": 4432,
+      "uniqueRows": 4432,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-01-15": {
+      "date": "2026-01-15",
+      "totalPages": 1,
+      "totalRawRows": 4432,
+      "uniqueRows": 4432,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-01-16": {
+      "date": "2026-01-16",
+      "totalPages": 1,
+      "totalRawRows": 4431,
+      "uniqueRows": 4431,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-01-19": {
+      "date": "2026-01-19",
+      "totalPages": 1,
+      "totalRawRows": 4431,
+      "uniqueRows": 4431,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-01-20": {
+      "date": "2026-01-20",
+      "totalPages": 1,
+      "totalRawRows": 4435,
+      "uniqueRows": 4435,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-01-21": {
+      "date": "2026-01-21",
+      "totalPages": 1,
+      "totalRawRows": 4435,
+      "uniqueRows": 4435,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-01-22": {
+      "date": "2026-01-22",
+      "totalPages": 1,
+      "totalRawRows": 4435,
+      "uniqueRows": 4435,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-01-23": {
+      "date": "2026-01-23",
+      "totalPages": 1,
+      "totalRawRows": 4435,
+      "uniqueRows": 4435,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-01-26": {
+      "date": "2026-01-26",
+      "totalPages": 1,
+      "totalRawRows": 4438,
+      "uniqueRows": 4438,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-01-27": {
+      "date": "2026-01-27",
+      "totalPages": 1,
+      "totalRawRows": 4437,
+      "uniqueRows": 4437,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-01-28": {
+      "date": "2026-01-28",
+      "totalPages": 1,
+      "totalRawRows": 4437,
+      "uniqueRows": 4437,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-01-29": {
+      "date": "2026-01-29",
+      "totalPages": 1,
+      "totalRawRows": 4435,
+      "uniqueRows": 4435,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-01-30": {
+      "date": "2026-01-30",
+      "totalPages": 1,
+      "totalRawRows": 4435,
+      "uniqueRows": 4435,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-02-02": {
+      "date": "2026-02-02",
+      "totalPages": 1,
+      "totalRawRows": 4435,
+      "uniqueRows": 4435,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-02-03": {
+      "date": "2026-02-03",
+      "totalPages": 1,
+      "totalRawRows": 4435,
+      "uniqueRows": 4435,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-02-04": {
+      "date": "2026-02-04",
+      "totalPages": 1,
+      "totalRawRows": 4435,
+      "uniqueRows": 4435,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-02-05": {
+      "date": "2026-02-05",
+      "totalPages": 1,
+      "totalRawRows": 4436,
+      "uniqueRows": 4436,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-02-06": {
+      "date": "2026-02-06",
+      "totalPages": 1,
+      "totalRawRows": 4436,
+      "uniqueRows": 4436,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-02-09": {
+      "date": "2026-02-09",
+      "totalPages": 1,
+      "totalRawRows": 4436,
+      "uniqueRows": 4436,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-02-10": {
+      "date": "2026-02-10",
+      "totalPages": 1,
+      "totalRawRows": 4436,
+      "uniqueRows": 4436,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-02-12": {
+      "date": "2026-02-12",
+      "totalPages": 1,
+      "totalRawRows": 4436,
+      "uniqueRows": 4436,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-02-13": {
+      "date": "2026-02-13",
+      "totalPages": 1,
+      "totalRawRows": 4437,
+      "uniqueRows": 4437,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-02-16": {
+      "date": "2026-02-16",
+      "totalPages": 1,
+      "totalRawRows": 4436,
+      "uniqueRows": 4436,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-02-17": {
+      "date": "2026-02-17",
+      "totalPages": 1,
+      "totalRawRows": 4436,
+      "uniqueRows": 4436,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-02-18": {
+      "date": "2026-02-18",
+      "totalPages": 1,
+      "totalRawRows": 4436,
+      "uniqueRows": 4436,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-02-19": {
+      "date": "2026-02-19",
+      "totalPages": 1,
+      "totalRawRows": 4436,
+      "uniqueRows": 4436,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-02-20": {
+      "date": "2026-02-20",
+      "totalPages": 1,
+      "totalRawRows": 4438,
+      "uniqueRows": 4438,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-02-24": {
+      "date": "2026-02-24",
+      "totalPages": 1,
+      "totalRawRows": 4439,
+      "uniqueRows": 4439,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-02-25": {
+      "date": "2026-02-25",
+      "totalPages": 1,
+      "totalRawRows": 4438,
+      "uniqueRows": 4438,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-02-26": {
+      "date": "2026-02-26",
+      "totalPages": 1,
+      "totalRawRows": 4437,
+      "uniqueRows": 4437,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-02-27": {
+      "date": "2026-02-27",
+      "totalPages": 1,
+      "totalRawRows": 4439,
+      "uniqueRows": 4439,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-03-02": {
+      "date": "2026-03-02",
+      "totalPages": 1,
+      "totalRawRows": 4439,
+      "uniqueRows": 4439,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-03-03": {
+      "date": "2026-03-03",
+      "totalPages": 1,
+      "totalRawRows": 4441,
+      "uniqueRows": 4441,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-03-04": {
+      "date": "2026-03-04",
+      "totalPages": 1,
+      "totalRawRows": 4441,
+      "uniqueRows": 4441,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-03-05": {
+      "date": "2026-03-05",
+      "totalPages": 1,
+      "totalRawRows": 4442,
+      "uniqueRows": 4442,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-03-06": {
+      "date": "2026-03-06",
+      "totalPages": 1,
+      "totalRawRows": 4442,
+      "uniqueRows": 4442,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-03-09": {
+      "date": "2026-03-09",
+      "totalPages": 1,
+      "totalRawRows": 4442,
+      "uniqueRows": 4442,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-03-10": {
+      "date": "2026-03-10",
+      "totalPages": 1,
+      "totalRawRows": 4443,
+      "uniqueRows": 4443,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-03-11": {
+      "date": "2026-03-11",
+      "totalPages": 1,
+      "totalRawRows": 4445,
+      "uniqueRows": 4445,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-03-12": {
+      "date": "2026-03-12",
+      "totalPages": 1,
+      "totalRawRows": 4444,
+      "uniqueRows": 4444,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-03-13": {
+      "date": "2026-03-13",
+      "totalPages": 1,
+      "totalRawRows": 4443,
+      "uniqueRows": 4443,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-03-16": {
+      "date": "2026-03-16",
+      "totalPages": 1,
+      "totalRawRows": 4443,
+      "uniqueRows": 4443,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-03-17": {
+      "date": "2026-03-17",
+      "totalPages": 1,
+      "totalRawRows": 4442,
+      "uniqueRows": 4442,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-03-18": {
+      "date": "2026-03-18",
+      "totalPages": 1,
+      "totalRawRows": 4443,
+      "uniqueRows": 4443,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-03-19": {
+      "date": "2026-03-19",
+      "totalPages": 1,
+      "totalRawRows": 4452,
+      "uniqueRows": 4452,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-03-23": {
+      "date": "2026-03-23",
+      "totalPages": 1,
+      "totalRawRows": 4449,
+      "uniqueRows": 4449,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-03-24": {
+      "date": "2026-03-24",
+      "totalPages": 1,
+      "totalRawRows": 4450,
+      "uniqueRows": 4450,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-03-25": {
+      "date": "2026-03-25",
+      "totalPages": 1,
+      "totalRawRows": 4452,
+      "uniqueRows": 4452,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-03-26": {
+      "date": "2026-03-26",
+      "totalPages": 1,
+      "totalRawRows": 4453,
+      "uniqueRows": 4453,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-03-27": {
+      "date": "2026-03-27",
+      "totalPages": 1,
+      "totalRawRows": 4453,
+      "uniqueRows": 4453,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-03-30": {
+      "date": "2026-03-30",
+      "totalPages": 1,
+      "totalRawRows": 4442,
+      "uniqueRows": 4442,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-03-31": {
+      "date": "2026-03-31",
+      "totalPages": 1,
+      "totalRawRows": 4444,
+      "uniqueRows": 4444,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-04-01": {
+      "date": "2026-04-01",
+      "totalPages": 1,
+      "totalRawRows": 4448,
+      "uniqueRows": 4448,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-04-02": {
+      "date": "2026-04-02",
+      "totalPages": 1,
+      "totalRawRows": 4449,
+      "uniqueRows": 4449,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-04-03": {
+      "date": "2026-04-03",
+      "totalPages": 1,
+      "totalRawRows": 4449,
+      "uniqueRows": 4449,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-04-06": {
+      "date": "2026-04-06",
+      "totalPages": 1,
+      "totalRawRows": 4450,
+      "uniqueRows": 4450,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-04-07": {
+      "date": "2026-04-07",
+      "totalPages": 1,
+      "totalRawRows": 4451,
+      "uniqueRows": 4451,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-04-08": {
+      "date": "2026-04-08",
+      "totalPages": 1,
+      "totalRawRows": 4451,
+      "uniqueRows": 4451,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-04-09": {
+      "date": "2026-04-09",
+      "totalPages": 1,
+      "totalRawRows": 4452,
+      "uniqueRows": 4452,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-04-10": {
+      "date": "2026-04-10",
+      "totalPages": 1,
+      "totalRawRows": 4450,
+      "uniqueRows": 4450,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-04-13": {
+      "date": "2026-04-13",
+      "totalPages": 1,
+      "totalRawRows": 4449,
+      "uniqueRows": 4449,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-04-14": {
+      "date": "2026-04-14",
+      "totalPages": 1,
+      "totalRawRows": 4448,
+      "uniqueRows": 4448,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-04-15": {
+      "date": "2026-04-15",
+      "totalPages": 1,
+      "totalRawRows": 4448,
+      "uniqueRows": 4448,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-04-16": {
+      "date": "2026-04-16",
+      "totalPages": 1,
+      "totalRawRows": 4448,
+      "uniqueRows": 4448,
+      "exactDuplicatesRemoved": 0
+    },
+    "2026-04-17": {
+      "date": "2026-04-17",
+      "totalPages": 1,
+      "totalRawRows": 4448,
+      "uniqueRows": 4448,
+      "exactDuplicatesRemoved": 0
+    }
+  },
+  "recordCountByDate": {
+    "2025-01-31": 4410,
+    "2025-02-03": 4409,
+    "2025-02-04": 4409,
+    "2025-02-05": 4411,
+    "2025-02-06": 4410,
+    "2025-02-07": 4410,
+    "2025-02-10": 4408,
+    "2025-02-12": 4407,
+    "2025-02-13": 4408,
+    "2025-02-14": 4408,
+    "2025-02-17": 4407,
+    "2025-02-18": 4407,
+    "2025-02-19": 4406,
+    "2025-02-20": 4408,
+    "2025-02-21": 4409,
+    "2025-02-25": 4408,
+    "2025-02-26": 4406,
+    "2025-02-27": 4406,
+    "2025-02-28": 4407,
+    "2025-03-03": 4407,
+    "2025-03-04": 4405,
+    "2025-03-05": 4405,
+    "2025-03-06": 4405,
+    "2025-03-07": 4405,
+    "2025-03-10": 4404,
+    "2025-03-11": 4404,
+    "2025-03-12": 4404,
+    "2025-03-13": 4403,
+    "2025-03-14": 4403,
+    "2025-03-17": 4403,
+    "2025-03-18": 4403,
+    "2025-03-19": 4404,
+    "2025-03-21": 4403,
+    "2025-03-24": 4404,
+    "2025-03-25": 4405,
+    "2025-03-26": 4405,
+    "2025-03-27": 4409,
+    "2025-03-28": 4410,
+    "2025-03-31": 4411,
+    "2025-04-01": 4411,
+    "2025-04-02": 4411,
+    "2025-04-03": 4411,
+    "2025-04-04": 4412,
+    "2025-04-07": 4413,
+    "2025-04-08": 4413,
+    "2025-04-09": 4413,
+    "2025-04-10": 4413,
+    "2025-04-11": 4413,
+    "2025-04-14": 4413,
+    "2025-04-15": 4413,
+    "2025-04-16": 4414,
+    "2025-04-17": 4415,
+    "2025-04-18": 4417,
+    "2025-04-21": 4417,
+    "2025-04-22": 4418,
+    "2025-04-23": 4416,
+    "2025-04-24": 4417,
+    "2025-04-25": 4416,
+    "2025-04-28": 4416,
+    "2025-04-30": 4415,
+    "2025-05-01": 4415,
+    "2025-05-02": 4415,
+    "2025-05-07": 4415,
+    "2025-05-08": 4415,
+    "2025-05-09": 4414,
+    "2025-05-12": 4414,
+    "2025-05-13": 4413,
+    "2025-05-14": 4411,
+    "2025-05-15": 4411,
+    "2025-05-16": 4410,
+    "2025-05-19": 4410,
+    "2025-05-20": 4410,
+    "2025-05-21": 4410,
+    "2025-05-22": 4410,
+    "2025-05-23": 4413,
+    "2025-05-26": 4412,
+    "2025-05-27": 4412,
+    "2025-05-28": 4411,
+    "2025-05-29": 4409,
+    "2025-05-30": 4409,
+    "2025-06-02": 4408,
+    "2025-06-03": 4408,
+    "2025-06-04": 4408,
+    "2025-06-05": 4408,
+    "2025-06-06": 4408,
+    "2025-06-09": 4406,
+    "2025-06-10": 4406,
+    "2025-06-11": 4406,
+    "2025-06-12": 4406,
+    "2025-06-13": 4405,
+    "2025-06-16": 4403,
+    "2025-06-17": 4400,
+    "2025-06-18": 4400,
+    "2025-06-19": 4398,
+    "2025-06-20": 4400,
+    "2025-06-23": 4401,
+    "2025-06-24": 4404,
+    "2025-06-25": 4408,
+    "2025-06-26": 4410,
+    "2025-06-27": 4409,
+    "2025-06-30": 4412,
+    "2025-07-01": 4412,
+    "2025-07-02": 4411,
+    "2025-07-03": 4411,
+    "2025-07-04": 4413,
+    "2025-07-07": 4413,
+    "2025-07-08": 4413,
+    "2025-07-09": 4412,
+    "2025-07-10": 4412,
+    "2025-07-11": 4411,
+    "2025-07-14": 4411,
+    "2025-07-15": 4411,
+    "2025-07-16": 4411,
+    "2025-07-17": 4409,
+    "2025-07-18": 4416,
+    "2025-07-22": 4416,
+    "2025-07-23": 4416,
+    "2025-07-24": 4418,
+    "2025-07-25": 4417,
+    "2025-07-28": 4415,
+    "2025-07-29": 4415,
+    "2025-07-30": 4415,
+    "2025-07-31": 4414,
+    "2025-08-01": 4414,
+    "2025-08-04": 4413,
+    "2025-08-05": 4414,
+    "2025-08-06": 4415,
+    "2025-08-07": 4415,
+    "2025-08-08": 4415,
+    "2025-08-12": 4415,
+    "2025-08-13": 4417,
+    "2025-08-14": 4417,
+    "2025-08-15": 4417,
+    "2025-08-18": 4415,
+    "2025-08-19": 4414,
+    "2025-08-20": 4414,
+    "2025-08-21": 4414,
+    "2025-08-22": 4414,
+    "2025-08-25": 4414,
+    "2025-08-26": 4414,
+    "2025-08-27": 4414,
+    "2025-08-28": 4411,
+    "2025-08-29": 4411,
+    "2025-09-01": 4410,
+    "2025-09-02": 4410,
+    "2025-09-03": 4410,
+    "2025-09-04": 4409,
+    "2025-09-05": 4409,
+    "2025-09-08": 4408,
+    "2025-09-09": 4408,
+    "2025-09-10": 4409,
+    "2025-09-11": 4410,
+    "2025-09-12": 4411,
+    "2025-09-16": 4411,
+    "2025-09-17": 4411,
+    "2025-09-18": 4412,
+    "2025-09-19": 4409,
+    "2025-09-22": 4409,
+    "2025-09-24": 4408,
+    "2025-09-25": 4411,
+    "2025-09-26": 4412,
+    "2025-09-29": 4404,
+    "2025-09-30": 4403,
+    "2025-10-01": 4408,
+    "2025-10-02": 4409,
+    "2025-10-03": 4410,
+    "2025-10-06": 4411,
+    "2025-10-07": 4413,
+    "2025-10-08": 4414,
+    "2025-10-09": 4414,
+    "2025-10-10": 4414,
+    "2025-10-14": 4412,
+    "2025-10-15": 4413,
+    "2025-10-16": 4413,
+    "2025-10-17": 4414,
+    "2025-10-20": 4414,
+    "2025-10-21": 4415,
+    "2025-10-22": 4415,
+    "2025-10-23": 4418,
+    "2025-10-24": 4419,
+    "2025-10-27": 4419,
+    "2025-10-28": 4419,
+    "2025-10-29": 4419,
+    "2025-10-30": 4417,
+    "2025-10-31": 4417,
+    "2025-11-04": 4418,
+    "2025-11-05": 4418,
+    "2025-11-06": 4417,
+    "2025-11-07": 4416,
+    "2025-11-10": 4416,
+    "2025-11-11": 4416,
+    "2025-11-12": 4419,
+    "2025-11-13": 4420,
+    "2025-11-14": 4421,
+    "2025-11-17": 4418,
+    "2025-11-18": 4419,
+    "2025-11-19": 4424,
+    "2025-11-20": 4423,
+    "2025-11-21": 4425,
+    "2025-11-25": 4425,
+    "2025-11-26": 4428,
+    "2025-11-27": 4426,
+    "2025-11-28": 4425,
+    "2025-12-01": 4428,
+    "2025-12-02": 4427,
+    "2025-12-03": 4427,
+    "2025-12-04": 4427,
+    "2025-12-05": 4429,
+    "2025-12-08": 4428,
+    "2025-12-09": 4427,
+    "2025-12-10": 4427,
+    "2025-12-11": 4427,
+    "2025-12-12": 4427,
+    "2025-12-15": 4428,
+    "2025-12-16": 4428,
+    "2025-12-17": 4432,
+    "2025-12-18": 4434,
+    "2025-12-19": 4433,
+    "2025-12-22": 4434,
+    "2025-12-23": 4434,
+    "2025-12-24": 4437,
+    "2025-12-25": 4437,
+    "2025-12-26": 4438,
+    "2025-12-29": 4437,
+    "2025-12-30": 4437,
+    "2026-01-05": 4436,
+    "2026-01-06": 4436,
+    "2026-01-07": 4436,
+    "2026-01-08": 4435,
+    "2026-01-09": 4435,
+    "2026-01-13": 4434,
+    "2026-01-14": 4432,
+    "2026-01-15": 4432,
+    "2026-01-16": 4431,
+    "2026-01-19": 4431,
+    "2026-01-20": 4435,
+    "2026-01-21": 4435,
+    "2026-01-22": 4435,
+    "2026-01-23": 4435,
+    "2026-01-26": 4438,
+    "2026-01-27": 4437,
+    "2026-01-28": 4437,
+    "2026-01-29": 4435,
+    "2026-01-30": 4435,
+    "2026-02-02": 4435,
+    "2026-02-03": 4435,
+    "2026-02-04": 4435,
+    "2026-02-05": 4436,
+    "2026-02-06": 4436,
+    "2026-02-09": 4436,
+    "2026-02-10": 4436,
+    "2026-02-12": 4436,
+    "2026-02-13": 4437,
+    "2026-02-16": 4436,
+    "2026-02-17": 4436,
+    "2026-02-18": 4436,
+    "2026-02-19": 4436,
+    "2026-02-20": 4438,
+    "2026-02-24": 4439,
+    "2026-02-25": 4438,
+    "2026-02-26": 4437,
+    "2026-02-27": 4439,
+    "2026-03-02": 4439,
+    "2026-03-03": 4441,
+    "2026-03-04": 4441,
+    "2026-03-05": 4442,
+    "2026-03-06": 4442,
+    "2026-03-09": 4442,
+    "2026-03-10": 4443,
+    "2026-03-11": 4445,
+    "2026-03-12": 4444,
+    "2026-03-13": 4443,
+    "2026-03-16": 4443,
+    "2026-03-17": 4442,
+    "2026-03-18": 4443,
+    "2026-03-19": 4452,
+    "2026-03-23": 4449,
+    "2026-03-24": 4450,
+    "2026-03-25": 4452,
+    "2026-03-26": 4453,
+    "2026-03-27": 4453,
+    "2026-03-30": 4442,
+    "2026-03-31": 4444,
+    "2026-04-01": 4448,
+    "2026-04-02": 4449,
+    "2026-04-03": 4449,
+    "2026-04-06": 4450,
+    "2026-04-07": 4451,
+    "2026-04-08": 4451,
+    "2026-04-09": 4452,
+    "2026-04-10": 4450,
+    "2026-04-13": 4449,
+    "2026-04-14": 4448,
+    "2026-04-15": 4448,
+    "2026-04-16": 4448,
+    "2026-04-17": 4448
+  }
+}
