@@ -2630,6 +2630,10 @@ async function buildTepou30(timeframe: StockTimeframe, sortMode: Tepou30SortMode
   const dataQualityWindowDates = generateRecentBusinessDates(DATA_QUALITY_WINDOW_DAYS);
   const dataQualityByCode = await fetchDataQualityWindow(dataQualityWindowDates, universeSet);
 
+  // P (percentile) is disabled here as a provisional decision based on the
+  // 1d candidate-extraction OOS evaluation (Q adopted / L unchanged / P not
+  // adopted); computePercentileExcludedCodes remains defined and tested for
+  // future re-evaluation.
   const finalScoringCandidates = selectV1Candidates(candidates, turnoverByCode, dataQualityByCode, null);
 
   const learningStore = await loadLearningStore();
