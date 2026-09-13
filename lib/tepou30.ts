@@ -2630,8 +2630,7 @@ async function buildTepou30(timeframe: StockTimeframe, sortMode: Tepou30SortMode
   const dataQualityWindowDates = generateRecentBusinessDates(DATA_QUALITY_WINDOW_DAYS);
   const dataQualityByCode = await fetchDataQualityWindow(dataQualityWindowDates, universeSet);
 
-  const percentileExcludedCodes = computePercentileExcludedCodes(candidates, turnoverByCode, dataQualityByCode);
-  const finalScoringCandidates = selectV1Candidates(candidates, turnoverByCode, dataQualityByCode, percentileExcludedCodes);
+  const finalScoringCandidates = selectV1Candidates(candidates, turnoverByCode, dataQualityByCode, null);
 
   const learningStore = await loadLearningStore();
   const selectedHorizon: WeightHorizon = timeframe === "5m" ? "5m" : timeframe === "15m" ? "15m" : "1d";
